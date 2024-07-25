@@ -8,19 +8,7 @@ namespace timemachine {
 // (ytz): courtesy of @scottlegrand/NVIDIA, even faster conversion
 // This was original a hack to improve perf on Maxwell, that is now needed since Ampere
 long long __device__ __forceinline__ real_to_int64(float x) {
-#if __CUDA_ARCH__ >= 610
-    float z = x * (float)0x1.00000p-32;
-    int hi = __float2int_rz(z);                            // First convert high bits
-    float delta = x - ((float)0x1.00000p32 * ((float)hi)); // Check remainder sign
-    int test = (__float_as_uint(delta) > 0xbf000000);
-    int lo = __float2uint_rn(fabsf(delta)); // Convert the (unsigned) remainder
-    lo = (test) ? -lo : lo;
-    hi -= test;                                                     // Two's complement correction
-    long long res = __double_as_longlong(__hiloint2double(hi, lo)); // Return 64-bit result
-    return res;
-#else
     return llrintf(x);
-#endif
 }
 
 // (ytz): reference version, left here for pedagogical reasons, do not remove.
@@ -86,11 +74,10 @@ template <typename RealType> unsigned long long __device__ __forceinline__ FLOAT
 * (long long)accumulated_energy > LLONG_MAX - Overflows and results in seemingly valid energies
 */
 template <typename RealType> __int128 __device__ __forceinline__ FLOAT_TO_FIXED_ENERGY(RealType u_orig) {
-    RealType u = u_orig * FIXED_EXPONENT;
+    double u = u_orig * FIXED_EXPONENT;
     // All clashes (beyond representation of long long) are treated as LLONG_MAX, to avoid clashes of different signs but non-identical values
     // cancelling out.
-    if (!isfinite(u) || static_cast<__int128>(u) >= static_cast<__int128>(LLONG_MAX) ||
-        static_cast<__int128>(u) <= static_cast<__int128>(LLONG_MIN)) {
+    if (!isfinite(u) || u >= LLONG_MAX || u <= LLONG_MIN) {
         return static_cast<__int128>(LLONG_MAX);
     } else {
         return static_cast<__int128>(real_to_int64(u));

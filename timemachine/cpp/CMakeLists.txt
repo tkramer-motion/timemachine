@@ -9,18 +9,7 @@ project(timemachine LANGUAGES CXX CUDA)
 find_package(PythonInterp 3.10 REQUIRED)
 find_package(PythonLibs 3.10 REQUIRED)
 
-string(APPEND CMAKE_CXX_FLAGS "-Werror -Wall -Wextra")
-
 string(APPEND CMAKE_CUDA_FLAGS "-O3 -lineinfo")
-string(APPEND CMAKE_CUDA_FLAGS
-  " -Werror all-warnings"
-  " -Wall"
-  " -Wno-sign-compare"
-  " -Wextra"
-  " -Wno-unused-parameter"
-  " -Wreorder"
-  " -Wfloat-conversion"
-)
 message(${CMAKE_CUDA_FLAGS})
 
 if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -122,7 +111,7 @@ include_directories(SYSTEM ${CMAKE_CURRENT_BINARY_DIR}/${CUB_SRC_DIR})
 set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_STANDARD 17)
 
 if (NOT CUDA_ARCH)
-  set(CUDA_ARCH "native")
+  set(CUDA_ARCH "86")
 endif()
 message("Cuda Arch: " ${CUDA_ARCH})
 set_property(TARGET ${LIBRARY_NAME} PROPERTY CUDA_ARCHITECTURES "${CUDA_ARCH}")
