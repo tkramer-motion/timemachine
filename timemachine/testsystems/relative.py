@@ -13,11 +13,11 @@ from timemachine.ff import Forcefield
 def get_hif2a_ligand_pair_single_topology():
     """Return two ligands from hif2a and the manually specified atom mapping"""
 
-    with resources.path("timemachine.testsystems.data", "ligands_40.sdf") as path_to_ligand:
+    with resources.path("timemachine.testsystems.data", "ligands_2.sdf") as path_to_ligand:
         all_mols = read_sdf(str(path_to_ligand))
 
-    mol_a = all_mols[1]
-    mol_b = all_mols[4]
+    mol_a = all_mols[0]
+    mol_b = all_mols[1]
 
     core = np.array(
         [

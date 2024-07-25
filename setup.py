@@ -51,6 +51,9 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
+            "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON",
+            "-DCMAKE_CUDA_ARCHITECTURES=86",
+            "-DCMAKE_CUDA_COMPILER=/opt/scale/targets/gfx1100/bin/nvcc"
         ]
 
         build_args = []
