@@ -16,20 +16,6 @@ import versioneer
 
 
 def install_custom_ops() -> bool:
-    """Determine if we should install the custom ops.
-
-    If it is not a linux machine and doesn't have at least nvcc we skip it. Can
-    still use the reference platform if needed in such cases.
-    """
-    if os.environ.get("SKIP_CUSTOM_OPS"):
-        return False
-    if "linux" not in sys.platform:
-        return False
-    try:
-        subprocess.check_call(["nvcc", "--version"])
-    except FileNotFoundError:
-        return False
-
     return True
 
 
