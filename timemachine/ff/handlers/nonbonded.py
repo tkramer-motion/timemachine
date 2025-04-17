@@ -6,7 +6,6 @@ import tempfile
 import warnings
 from collections import Counter
 from shutil import which
-from typing import Optional
 
 import jax.numpy as jnp
 import networkx as nx
@@ -124,6 +123,7 @@ def oe_assign_charges(mol, charge_model=AM1BCCELF10):
 
     if charge_model in ELF10_MODELS:
         oe_generate_conformations(oemol)
+        print(f"Generated {oemol.NumConfs()} OpenEye conformers")
 
     result = oequacpac.OEAssignCharges(oemol, charge_engine)
     if result is False:
@@ -165,18 +165,14 @@ def rdkit_generate_conformations(mol):
 
 
 def rdkit_assign_partial_charges(
-        molecule: "Molecule",
-        partial_charge_method: Optional[str] = None,
-        use_conformers: Optional[list[Quantity]] = None,
+        molecule: Molecule,
+        partial_charge_method: str,
+        use_conformers: list[Quantity],
         strict_n_conformers: bool = False,
         normalize_partial_charges: bool = True,
         _cls=None,
 ):
-    if partial_charge_method is None:
-        partial_charge_method = "am1-mulliken"
-    else:
-        # Standardize method name for string comparisons
-        partial_charge_method = partial_charge_method.lower()
+    partial_charge_method = partial_charge_method.lower()
 
     if partial_charge_method not in AmberToolsToolkitWrapper._supported_charge_methods:
         raise ChargeMethodUnavailableError(
@@ -194,27 +190,16 @@ def rdkit_assign_partial_charges(
 
     rdkit_toolkit_wrapper = rdkit_wrapper.RDKitToolkitWrapper()
 
-    if use_conformers is None:
-        if charge_method["rec_confs"] == 0:
-            mol_copy._conformers = None
-        else:
-            mol_copy.generate_conformers(
-                n_conformers=charge_method["rec_confs"],
-                rms_cutoff=0.25 * unit.angstrom,
-                toolkit_registry=rdkit_toolkit_wrapper,
-            )
-        # TODO: What's a "best practice" RMS cutoff to use here?
-    else:
-        mol_copy._conformers = None
-        for conformer in use_conformers:
-            mol_copy._add_conformer(conformer)
-        AmberToolsToolkitWrapper._check_n_conformers(None,
-                                                     mol_copy,
-                                                     partial_charge_method=partial_charge_method,
-                                                     min_confs=charge_method["min_confs"],
-                                                     max_confs=charge_method["max_confs"],
-                                                     strict_n_conformers=strict_n_conformers,
-                                                     )
+    mol_copy._conformers = None
+    for conformer in use_conformers:
+        mol_copy._add_conformer(conformer)
+    AmberToolsToolkitWrapper._check_n_conformers(None,
+                                                 mol_copy,
+                                                 partial_charge_method=partial_charge_method,
+                                                 min_confs=charge_method["min_confs"],
+                                                 max_confs=charge_method["max_confs"],
+                                                 strict_n_conformers=strict_n_conformers,
+                                                 )
 
     ANTECHAMBER_PATH = which("antechamber")
     if ANTECHAMBER_PATH is None:
@@ -226,12 +211,10 @@ def rdkit_assign_partial_charges(
     with tempfile.TemporaryDirectory() as tmpdir:
         net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
         # Write out molecule in SDF format
-        # TODO: How should we handle multiple conformers?
         rdkit_toolkit_wrapper.to_file(
             mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
         )
         # Compute desired charges
-        # TODO: Add error handling if antechamber chokes
         short_charge_method = charge_method["antechamber_keyword"]
         subprocess.check_output(
             [
@@ -284,7 +267,6 @@ def rdkit_assign_partial_charges(
         )
         # Check to ensure charges were actually produced
         if not os.path.exists(f"{tmpdir}/charges.txt"):
-            # TODO: copy files into local directory to aid debugging?
             raise ChargeCalculationError(
                 "Antechamber/sqm partial charge calculation failed on "
                 f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
@@ -306,8 +288,12 @@ def rdkit_assign_partial_charges(
 def rdkit_assign_charges(rdmol):
     rdkit_generate_conformations(rdmol)
 
+    print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
+
     mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
     mol.apply_elf_conformer_selection()
+
+    print(f"Selected {len(mol.conformers)} RDKit conformers")
 
     partial_charges = []
     for conformer in mol.conformers:
