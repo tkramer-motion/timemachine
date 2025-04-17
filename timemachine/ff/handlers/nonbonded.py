@@ -12,8 +12,8 @@ import networkx as nx
 import numpy as np
 from jax import jit, vmap
 from numpy.typing import NDArray
-from openff.toolkit import unit, AmberToolsToolkitWrapper, Molecule
-from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper
+from openff.toolkit import unit, AmberToolsToolkitWrapper, Molecule, RDKitToolkitWrapper
+from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper, toolkit_registry
 from openff.toolkit.utils.exceptions import (
     AntechamberNotFoundError,
     ChargeCalculationError,
@@ -160,7 +160,9 @@ def rdkit_generate_conformations(mol):
         mol,
         numConfs=800,
         clearConfs=True,
-        pruneRmsThresh=1.0
+        numThreads=8,
+        enforceChirality=True,
+        pruneRmsThresh=0.5
     )
 
 
@@ -285,13 +287,14 @@ def rdkit_assign_partial_charges(
         molecule._normalize_partial_charges()
 
 
-def rdkit_assign_charges(rdmol):
+def rdkit_assign_charges(_rdmol):
+    rdmol = Chem.Mol(_rdmol)
     rdkit_generate_conformations(rdmol)
 
     print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
 
     mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
-    mol.apply_elf_conformer_selection()
+    mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper())
 
     print(f"Selected {len(mol.conformers)} RDKit conformers")
 
