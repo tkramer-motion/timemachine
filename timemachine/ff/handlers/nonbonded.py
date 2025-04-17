@@ -13,7 +13,7 @@ import numpy as np
 from jax import jit, vmap
 from numpy.typing import NDArray
 from openff.toolkit import unit, AmberToolsToolkitWrapper, Molecule, RDKitToolkitWrapper
-from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper, toolkit_registry
+from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper
 from openff.toolkit.utils.exceptions import (
     AntechamberNotFoundError,
     ChargeCalculationError,
@@ -162,7 +162,7 @@ def rdkit_generate_conformations(mol):
         clearConfs=True,
         numThreads=8,
         enforceChirality=True,
-        pruneRmsThresh=0.5
+        pruneRmsThresh=1.0
     )
 
 
@@ -294,14 +294,20 @@ def rdkit_assign_charges(_rdmol):
     print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
 
     mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
-    mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper())
+    mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper(), rms_tolerance=1.0 * unit.angstrom)
 
     print(f"Selected {len(mol.conformers)} RDKit conformers")
 
     partial_charges = []
-    for conformer in mol.conformers:
-        rdkit_assign_partial_charges(mol, "am1bcc", use_conformers=[conformer], normalize_partial_charges=True)
-        partial_charges.append(mol.partial_charges)
+    for i, conformer in enumerate(mol.conformers):
+        try:
+            rdkit_assign_partial_charges(mol, "am1bcc", use_conformers=[conformer], normalize_partial_charges=True)
+            partial_charges.append(mol.partial_charges)
+        except subprocess.CalledProcessError as e:
+            print(f"Error assigning partial charges for conformer {i}: {e}")
+
+    if not partial_charges:
+        raise ValueError("No charges could be assigned to any conformer")
 
     partial_charges = np.array(partial_charges)
     partial_charges = np.average(partial_charges, axis=0)
