@@ -430,7 +430,7 @@ def compute_or_load_oe_charges(mol, mode=AM1ELF10):
         # to be an issue that the atom ordering modifies the return values as well. A follow up
         # with OpenEye is in order
         # https://github.com/openforcefield/openff-toolkit/issues/983
-        oe_charges = list(oe_assign_charges(mol, mode))
+        oe_charges = list(rdkit_assign_charges(mol))
 
         mol.SetProp(cache_prop_name, base64.b64encode(pickle.dumps(oe_charges)))
 
