@@ -14,11 +14,6 @@ Params = Any
 Key = Any
 
 
-# used to convert arrays to a hashable type for use as dict keys and in sets
-def to_hashable(x):
-    return tuple(to_hashable(e) for e in x) if isinstance(x, Iterable) else x
-
-
 def align_idxs_and_params(
     src_idxs,
     src_params,
@@ -83,6 +78,10 @@ def align_idxs_and_params(
     for all_idxs in [src_idxs, dst_idxs]:
         for idxs in all_idxs:
             validate_idxs(idxs)
+
+    # used to convert arrays to a hashable type for use as dict keys and in sets
+    def to_hashable(x):
+        return tuple(to_hashable(e) for e in x) if isinstance(x, Iterable) else x
 
     def make_kv(all_idxs, all_params):
         kvs = [(to_hashable(key(idxs, params)), params) for idxs, params in zip(all_idxs, all_params)]
@@ -150,9 +149,7 @@ def linear_interpolation(src_params, dst_params, lamb):
     """
     Linearly interpolate between src and dst params
     """
-    # (ytz): the extra jnp.where is to avoid round-off errors in floating point arithmetic.
-    # eg. if lambda=0.7, we have 0.3x + 0.7x ~= 1.0x, but with the where condition, we can return exactly x.
-    return jnp.where(src_params == dst_params, src_params, (1 - lamb) * src_params + lamb * dst_params)
+    return (1 - lamb) * src_params + lamb * dst_params
 
 
 def log_linear_interpolation(src_params, dst_params, lamb, min_value):

@@ -5,6 +5,7 @@ from jax import grad, jit, value_and_grad, vmap
 from jax import numpy as jnp
 
 from timemachine.constants import BOLTZ
+from timemachine.datasets import fetch_freesolv
 from timemachine.fe.bar import DEFAULT_SOLVER_PROTOCOL, DG_KEY
 from timemachine.fe.reweighting import (
     construct_endpoint_reweighting_estimator,
@@ -15,7 +16,6 @@ from timemachine.fe.reweighting import (
 from timemachine.ff import Forcefield
 from timemachine.md.enhanced import get_solvent_phase_system
 from timemachine.potentials import SummedPotential
-from timemachine.testsystems import fetch_freesolv
 from timemachine.testsystems.gaussian1d import make_gaussian_testsystem
 
 pytestmark = [pytest.mark.nocuda]

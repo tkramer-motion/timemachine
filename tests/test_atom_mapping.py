@@ -24,8 +24,8 @@ from timemachine.fe.utils import (
 pytestmark = [pytest.mark.nocuda]
 
 datasets = {
-    "hif2a": "timemachine/testsystems/fep_benchmark/hif2a/ligands.sdf",
-    "eg5": "timemachine/testsystems/fep_benchmark/eg5/ligands.sdf",
+    "hif2a": "timemachine/datasets/fep_benchmark/hif2a/ligands.sdf",
+    "eg5": "timemachine/datasets/fep_benchmark/eg5/ligands.sdf",
 }
 
 
@@ -1260,7 +1260,8 @@ def test_initial_mapping_always_a_subset_of_cores(pair, hif2a_ligands):
 @pytest.mark.parametrize(
     "param_to_change,new_val,expect_exception",
     [
-        ("max_connected_components", None, False),
+        ("ring_matches_ring_only", False, False),
+        ("max_connected_components", None, 1),
         ("enforce_core_core", False, False),
         ("enforce_chiral", False, False),
         ("disallow_planar_torsion_flips", False, False),
@@ -1282,6 +1283,7 @@ def test_initial_mapping_ignores_filters(hif2a_ligands, param_to_change, new_val
     initial_map_kwargs = DEFAULT_ATOM_MAPPING_KWARGS.copy()
     initial_map_kwargs["initial_mapping"] = unfiltered_cores[0]
 
+    # if param_to_change != "ring_matches_ring_only":
     # If we remap with this core that is invalid under the mapping conditions, return the original core
     if expect_exception:
         # If there is no connected core that can be made from the disconnected core, expect NoMappingError

@@ -33,7 +33,7 @@ from timemachine.ff import Forcefield, ForcefieldParams
 from timemachine.lib import LangevinIntegrator, MonteCarloBarostat, custom_ops
 from timemachine.lib.custom_ops import Context
 from timemachine.md.barostat.utils import compute_box_center, get_bond_list, get_group_indices
-from timemachine.md.exchange.exchange_mover import WaterSamplingDiagnostics, get_water_idxs
+from timemachine.md.exchange.exchange_mover import get_water_idxs
 from timemachine.md.hrex import HREX, HREXDiagnostics, ReplicaIdx, StateIdx, get_swap_attempts_per_iter_heuristic
 from timemachine.md.states import CoordsVelBox
 from timemachine.potentials import (
@@ -140,39 +140,29 @@ class WaterSamplingParams:
 
 
 @dataclass(frozen=True)
-class LocalMDParams:
-    local_steps: int
-    k: float = 1_000.0  # kJ/mol/nm^4
-    min_radius: float = 1.0  # nm
-    max_radius: float = 3.0  # nm
-    freeze_reference: bool = True
-
-    def __post_init__(self):
-        assert 0.1 <= self.min_radius <= self.max_radius
-        assert self.local_steps > 0
-        assert 1.0 <= self.k <= 1.0e6
-
-
-@dataclass(frozen=True)
 class MDParams:
     n_frames: int
     n_eq_steps: int
     steps_per_frame: int
     seed: int
+    local_steps: int = 0
+    k: float = 1_000.0  # kJ/mol/nm^4
+    min_radius: float = 1.0  # nm
+    max_radius: float = 3.0  # nm
+    freeze_reference: bool = True
 
-    # Set to LocalMDParams to enable local MD
-    local_md_params: LocalMDParams | None = None
     # Set to HREXParams or None to disable HREX
-    hrex_params: HREXParams | None = None
+    hrex_params: Optional[HREXParams] = None
     # Setting water_sampling_params to None disables water sampling.
-    water_sampling_params: WaterSamplingParams | None = None
+    water_sampling_params: Optional[WaterSamplingParams] = None
 
     def __post_init__(self):
         assert self.steps_per_frame > 0
         assert self.n_frames > 0
         assert self.n_eq_steps >= 0
-        if self.local_md_params is not None:
-            assert self.local_md_params.local_steps <= self.steps_per_frame
+        assert 0.1 <= self.min_radius <= self.max_radius
+        assert 0 <= self.local_steps <= self.steps_per_frame
+        assert 1.0 <= self.k <= 1.0e6
 
 
 @dataclass
@@ -317,7 +307,6 @@ class SimulationResult:
 class HREXSimulationResult(SimulationResult):
     hrex_diagnostics: HREXDiagnostics
     hrex_plots: HREXPlots
-    water_sampling_diagnostics: WaterSamplingDiagnostics | None = None
 
     def extract_trajectories_by_replica(self, atom_idxs: NDArray) -> NDArray:
         """Returns an array of shape (n_replicas, n_frames, len(atom_idxs), 3) of trajectories for each replica
@@ -561,50 +550,19 @@ class AbsoluteFreeEnergy(BaseFreeEnergy):
 def get_water_sampler_params(initial_state: InitialState) -> NDArray:
     """Given an initial state, return a copy of the parameters that define the nonbonded parameters of water with respect to the
     entire system.
-
-    Water Interactions (with other Waters, Ligand, Protein) need to be consistent with the MD potentials.
-
-    Given the full N x N nonbonded interaction matrix:
-
-       P       W      L
-    ----------------------
-    |   P0 |   W0 |   L1 |
-    | P0   | P0   | P1   |
-    |------.------|-------
-    | P0   | W0   | W1   |
-    |   W0 |   W0 |   L1 |
-    ---------------------|
-    | P1   | W1   | L0   |
-    |   L1 |   L1 |   L0 |
-    ----------------------
-
-    Let W0, P0, L0 be the parameters from NonbondedAllPairs, W1, P1, L1 from the NonbondedInteractionGroup
-
-    We expect the parameters used for the water sampler to meet the following requirements:
-
-    1) Waters Parameters: assert that W0 == W1, we use NonbondedAllPairs but could use either
-    2) Protein Parameters: read protein parameters (P0) from NonbondedAllPairs
-    3) Ligand Parameters: read ligand parameters (L1) from NonbondedInteractionGroup
-
-    Important to note that P1 can change in Protein-Ligand charge fitting, which is okay because it is only expected
-    to impact Protein-Ligand interactions and not Protein-Water. If protein side chains are to be enhanced, the parameter
-    changes are expected to be in P0 to ensure correct water sampling.
     """
     nb_ixn_pot = get_bound_potential_by_type(initial_state.potentials, NonbondedInteractionGroup)
-    water_sampler_params = np.array(nb_ixn_pot.params)
+    water_params = np.array(nb_ixn_pot.params)
 
-    # If the system contains a host, use the parameters of the Nonbonded potential for the water sampler the
-    # NonbondedInteractionGroup host parameters may be modified for protein-ligand charge fitting
-    if initial_state.barostat is not None:
-        host_idxs = np.delete(np.arange(initial_state.x0.shape[0]), initial_state.ligand_idxs)
-        water_idxs = np.delete(host_idxs, initial_state.protein_idxs)
-        nb_all_pairs_params = get_bound_potential_by_type(initial_state.potentials, Nonbonded).params
-        np.testing.assert_array_equal(nb_all_pairs_params[water_idxs], water_sampler_params[water_idxs])
-        host_params = nb_all_pairs_params[host_idxs]
-        water_sampler_params[host_idxs] = host_params
+    # If the protein is present, use the original protein parameters for the water sampler
+    if len(initial_state.protein_idxs):
+        prot_params = get_bound_potential_by_type(initial_state.potentials, Nonbonded).params[
+            initial_state.protein_idxs
+        ]
+        water_params[initial_state.protein_idxs] = prot_params
 
-    assert water_sampler_params.shape[1] == 4
-    return water_sampler_params
+    assert water_params.shape[1] == 4
+    return water_params
 
 
 def get_context(initial_state: InitialState, md_params: Optional[MDParams] = None) -> Context:
@@ -710,8 +668,8 @@ def sample_with_context_iter(
 
     rng = np.random.default_rng(md_params.seed)
 
-    if md_params.local_md_params is not None:
-        ctxt.setup_local_md(temperature, md_params.local_md_params.freeze_reference)
+    if md_params.local_steps > 0:
+        ctxt.setup_local_md(temperature, md_params.freeze_reference)
 
     assert np.all(np.isfinite(ctxt.get_x_t())), "Equilibration resulted in a nan"
 
@@ -727,22 +685,21 @@ def sample_with_context_iter(
     def run_production_local_steps(n_steps: int) -> tuple[NDArray, NDArray, NDArray]:
         coords = []
         boxes = []
-        assert md_params.local_md_params is not None
         for steps in batches(n_steps, md_params.steps_per_frame):
             if steps < md_params.steps_per_frame:
                 warn(
                     f"Batch of sample has {steps} steps, less than batch size {md_params.steps_per_frame}. Setting to {md_params.steps_per_frame}"
                 )
                 steps = md_params.steps_per_frame
-            local_steps = md_params.local_md_params.local_steps
-            global_steps = steps - local_steps
+            global_steps = steps - md_params.local_steps
+            local_steps = md_params.local_steps
             if global_steps > 0:
                 ctxt.multiple_steps(n_steps=global_steps)
             x_t, box_t = ctxt.multiple_steps_local(
                 local_steps,
                 ligand_idxs.astype(np.int32),
-                k=md_params.local_md_params.k,
-                radius=rng.uniform(md_params.local_md_params.min_radius, md_params.local_md_params.max_radius),
+                k=md_params.k,
+                radius=rng.uniform(md_params.min_radius, md_params.max_radius),
                 seed=rng.integers(np.iinfo(np.int32).max),
             )
             coords.append(x_t)
@@ -753,7 +710,7 @@ def sample_with_context_iter(
         return np.concatenate(coords), np.concatenate(boxes), final_velocities
 
     steps_func = run_production_steps
-    if md_params.local_md_params is not None:
+    if md_params.local_steps > 0:
         steps_func = run_production_local_steps
 
     for n_frames in batches(md_params.n_frames, batch_size):
@@ -1286,15 +1243,9 @@ def assert_ensembles_compatible(state_a: InitialState, state_b: InitialState):
         # also, assert barostat and integrator are self-consistent
         assert intg_a.temperature == baro_a.temperature
 
-        # The protein and water parameters should match exactly for the water sampling parameters
-        water_sampler_params_a = get_water_sampler_params(state_a)
-        water_sampler_params_b = get_water_sampler_params(state_b)
-        np.testing.assert_array_equal(state_a.ligand_idxs, state_b.ligand_idxs)
-        non_ligand_idxs = np.delete(np.arange(state_a.x0.shape[0]), state_a.ligand_idxs)
-        np.testing.assert_array_equal(water_sampler_params_a[non_ligand_idxs], water_sampler_params_b[non_ligand_idxs])
     else:
         # assert (A, B) are compatible NVT ensembles
-        np.testing.assert_array_equal(state_a.box0, state_b.box0)
+        assert (state_a.box0 == state_b.box0).all()
 
 
 def compute_u_kn(trajs, initial_states) -> tuple[NDArray, NDArray]:
@@ -1385,7 +1336,7 @@ def run_sims_hrex(
     md_params: MDParams,
     n_swap_attempts_per_iter: Optional[int] = None,
     print_diagnostics_interval: Optional[int] = 10,
-) -> tuple[PairBarResult, list[Trajectory], HREXDiagnostics, WaterSamplingDiagnostics | None]:
+) -> tuple[PairBarResult, list[Trajectory], HREXDiagnostics]:
     r"""Sample from a sequence of states using nearest-neighbor Hamiltonian Replica EXchange (HREX).
 
     See documentation for :py:func:`timemachine.md.hrex.run_hrex` for details of the algorithm and implementation.
@@ -1456,18 +1407,11 @@ def run_sims_hrex(
         neighbor_pairs = [(StateIdx(0), StateIdx(0)), *neighbor_pairs]
 
     barostat = context.get_barostat()
-    water_sampler: custom_ops.TIBDExchangeMove_f32 | custom_ops.TIBDExchangeMove_f64 | None = None
-
-    if barostat is not None and md_params.water_sampling_params is not None:
-        # Should have a barostat and a water sampler
-        assert len(context.get_movers()) == 2
-        water_sampler = next(mover for mover in context.get_movers() if isinstance(mover, WATER_SAMPLER_MOVERS))
 
     hrex = HREX.from_replicas([CoordsVelBox(s.x0, s.v0, s.box0) for s in initial_states])
 
     samples_by_state: list[Trajectory] = [Trajectory.empty() for _ in initial_states]
     replica_idx_by_state_by_iter: list[list[ReplicaIdx]] = []
-    water_sampler_proposals_by_state_by_iter: list[list[tuple[int, int]]] = []
     fraction_accepted_by_pair_by_iter: list[list[tuple[int, int]]] = []
 
     if (
@@ -1480,7 +1424,6 @@ def run_sims_hrex(
     last_update_time = begin_loop_time
 
     for current_frame in range(md_params.n_frames):
-        water_sampling_acceptance_proposal_counts_by_state = [(0, 0) for _ in range(len(initial_states))]
 
         def sample_replica(xvb: CoordsVelBox, state_idx: StateIdx) -> tuple[NDArray, NDArray, NDArray, Optional[float]]:
             context.set_x_t(xvb.coords)
@@ -1492,16 +1435,12 @@ def run_sims_hrex(
 
             current_step = current_frame * md_params.steps_per_frame
             # Setup the MC movers of the Context
-            starting_water_acceptances = 0
-            starting_water_proposals = 0
-            if water_sampler is not None:
-                assert water_params_by_state is not None
-                water_sampler.set_params(water_params_by_state[state_idx])
-                water_sampler.set_step(current_step)
-                starting_water_proposals = water_sampler.n_proposed()
-                starting_water_acceptances = water_sampler.n_accepted()
-            if barostat is not None:
-                barostat.set_step(current_step)
+            for mover in context.get_movers():
+                if md_params.water_sampling_params is not None and isinstance(mover, WATER_SAMPLER_MOVERS):
+                    assert water_params_by_state is not None
+                    mover.set_params(water_params_by_state[state_idx])
+                # Set the step so that all windows have the movers be called the same number of times.
+                mover.set_step(current_step)
 
             md_params_replica = replace(
                 md_params,
@@ -1518,14 +1457,6 @@ def run_sims_hrex(
             )
             assert frame.shape[0] == 1
 
-            if water_sampler is not None:
-                final_water_proposals = water_sampler.n_proposed() - starting_water_proposals
-                final_water_acceptances = water_sampler.n_accepted() - starting_water_acceptances
-                water_sampling_acceptance_proposal_counts_by_state[state_idx] = (
-                    final_water_acceptances,
-                    final_water_proposals,
-                )
-
             final_barostat_volume_scale_factor = barostat.get_volume_scale_factor() if barostat is not None else None
 
             return frame[-1], box[-1], final_velos, final_barostat_volume_scale_factor
@@ -1535,7 +1466,6 @@ def run_sims_hrex(
             return CoordsVelBox(frame, velos, box)
 
         hrex, samples_by_state_iter = hrex.sample_replicas(sample_replica, replica_from_samples)
-        water_sampler_proposals_by_state_by_iter.append(water_sampling_acceptance_proposal_counts_by_state)
         U_kl_raw = compute_potential_matrix(potential, hrex, params_by_state, md_params.hrex_params.max_delta_states)
         U_kl = verify_and_sanitize_potential_matrix(U_kl_raw, hrex.replica_idx_by_state)
         log_q_kl = -U_kl / (BOLTZ * temperature)
@@ -1610,9 +1540,6 @@ def run_sims_hrex(
         estimate_free_energy_bar(u_kln_by_component, temperature) for u_kln_by_component in neighbor_ulkns_by_component
     ]
 
-    hrex_diagnostics = HREXDiagnostics(replica_idx_by_state_by_iter, fraction_accepted_by_pair_by_iter)
-    ws_diagnostics: WaterSamplingDiagnostics | None = None
-    if md_params.water_sampling_params is not None:
-        ws_diagnostics = WaterSamplingDiagnostics(np.array(water_sampler_proposals_by_state_by_iter, dtype=np.int32))
+    diagnostics = HREXDiagnostics(replica_idx_by_state_by_iter, fraction_accepted_by_pair_by_iter)
 
-    return PairBarResult(list(initial_states), pair_bar_results), samples_by_state, hrex_diagnostics, ws_diagnostics
+    return PairBarResult(list(initial_states), pair_bar_results), samples_by_state, diagnostics

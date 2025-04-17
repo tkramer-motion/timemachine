@@ -79,19 +79,14 @@ def harmonic_bond(conf, params, box, bond_idxs):
     return jnp.sum(energy)
 
 
-def kahan_angle(ci, cj, ck, eps):
+def kahan_angle(ci, cj, ck):
     """
     Compute the angle given three points, i,j,k, as defined by the vector j->i, j->k
-
-    Note: eps is a small value used to stabilize computation when either r_ji or r_jk goes to zero.
-    See: https://github.com/proteneer/timemachine/pull/935
     """
-    rji = jnp.hstack([ci - cj, jnp.expand_dims(eps, axis=-1)])
-    rjk = jnp.hstack([ck - cj, jnp.expand_dims(eps, axis=-1)])
-    nji = jnp.linalg.norm(rji, axis=-1)
-    njk = jnp.linalg.norm(rjk, axis=-1)
-    nji = jnp.expand_dims(nji, axis=-1)
-    njk = jnp.expand_dims(njk, axis=-1)
+    rji = ci - cj
+    rjk = ck - cj
+    nji = jnp.linalg.norm(rji, axis=-1, keepdims=True)
+    njk = jnp.linalg.norm(rjk, axis=-1, keepdims=True)
     y = jnp.linalg.norm(njk * rji - nji * rjk, axis=-1)
     x = jnp.linalg.norm(njk * rji + nji * rjk, axis=-1)
     angle = 2 * jnp.arctan2(y, x)
@@ -99,27 +94,20 @@ def kahan_angle(ci, cj, ck, eps):
 
 
 def harmonic_angle(conf, params, box, angle_idxs):
-    r"""
-    Compute the harmonic angle energy using a numerically stable approximation.
+    """
+    Compute the harmonic angle energy given a collection of molecules.
 
-    The functional form is identical to :py:func:`potentials.bonded.HarmonicAngle`, except that the following
-    approximation is used for the intermediate computation of :math:`\cos(\theta)`:
-
-    :math::
-
-        \cos(\theta) \approx \frac{r_{ij} \cdot r_{kj}}{\sqrt{(r_{ij}^2 + \epsilon^2) (r_{kj}^2 + \epsilon^2)}}
-
-    This reduces to the exact expression when :math:`\epsilon = 0`; When :math:`\epsilon > 0`, this avoids the
-    singularities in the exact expression as :math:`r_{ij}` or :math:`r_{kj}` approach zero.
+    This implements a harmonic angle potential:
+        V(t) = k*(t - t0)^2
 
     Parameters:
     -----------
     conf: shape [num_atoms, 3] np.ndarray
         atomic coordinates
 
-    params: shape [num_angles, 3] np.ndarray
-        force constants, eq angles, epsilons
-        (kas, a0s, epsilons = params.T)
+    params: shape [num_angles, 2] np.ndarray
+        force constants, eq angles
+        (kas, a0s = params.T)
 
     box: shape [3, 3] np.ndarray
         periodic boundary vectors, if not None
@@ -128,14 +116,21 @@ def harmonic_angle(conf, params, box, angle_idxs):
         each element (i, j, k) is a unique angle in the conformation. Atom j is defined
         to be the middle atom.
 
+    Notes
+    -----
+    * box argument unused
     """
     if angle_idxs.shape[0] == 0:
         return 0.0
-    ci, cj, ck = conf[angle_idxs.T]
-    kas, a0s, eps = params.T
-    angle = kahan_angle(ci, cj, ck, eps)
+    ci = conf[angle_idxs[:, 0]]
+    cj = conf[angle_idxs[:, 1]]
+    ck = conf[angle_idxs[:, 2]]
+    kas = params[:, 0]
+    a0s = params[:, 1]
+    angle = kahan_angle(ci, cj, ck)
     energies = kas / 2 * jnp.power(angle - a0s, 2)
-    return jnp.sum(energies, -1)
+
+    return jnp.sum(energies, axis=-1)  # reduce over all angles
 
 
 def signed_torsion_angle(ci, cj, ck, cl):

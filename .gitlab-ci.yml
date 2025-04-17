@@ -5,10 +5,8 @@ stages:          # List of stages for jobs, and their order of execution
 
 variables:
     # The default CI branch should slugify to the same name, such that $CI_COMMIT_REF_SLUG == $CI_DEFAULT_BRANCH
-    # which allows branches to use the default's branches image as a cache
+    # which allows branches to use the default's branchs image as a cache
     DOCKER_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
-    # Directory to write CI artifacts to, read in tests/common.py
-    CI_ARTIFACT_DIR: pytest-artifacts/
 
 workflow:
   rules:
@@ -62,7 +60,6 @@ nocuda-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nocuda-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -106,7 +103,6 @@ nogpu-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nogpu-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -125,7 +121,6 @@ memory-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-memtests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -144,26 +139,7 @@ unit-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
-    expire_in: 1 week
-
-fixed-output-tests:
-  stage: test
-  image: $DOCKER_TAG
-  needs: ["lint"]
-  tags:
-    - aws-tardis-gpu
-  rules:
-    - if: $CI_EXTERNAL_PULL_REQUEST_IID
-  script:
-    - pip install .[test]
-    - make fixed_output_tests
-  artifacts:
-    name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-fixed-output-tests"
-    paths:
-        - coverage/
-        - $CI_ARTIFACT_DIR
     expire_in: 1 week
 
 nightly-tests:
@@ -181,7 +157,6 @@ nightly-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nightly-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -200,7 +175,6 @@ nightly-memcheck-tests:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nightly-memcheck-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -219,7 +193,6 @@ nightly-tests-nocuda:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nocuda-nightly-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week
 
@@ -241,6 +214,5 @@ nightly-tests-nogpu:
     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME-nogpu-nightly-tests"
     paths:
         - coverage/
-        - $CI_ARTIFACT_DIR
     when: on_success
     expire_in: 1 week

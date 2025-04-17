@@ -903,7 +903,7 @@ def estimate_relative_free_energy_bisection_hrex_impl(
             initial_states_hrex = [get_initial_state(s.lamb) for s in initial_states]
 
         # Second phase: sample initial states determined by bisection using HREX
-        pair_bar_result, trajectories_by_state, hrex_diagnostics, ws_diagnostics = run_sims_hrex(
+        pair_bar_result, trajectories_by_state, diagnostics = run_sims_hrex(
             initial_states_hrex,
             replace(md_params, n_eq_steps=0),  # using pre-equilibrated samples
         )
@@ -912,29 +912,22 @@ def estimate_relative_free_energy_bisection_hrex_impl(
 
         hrex_plots = HREXPlots(
             transition_matrix_png=plot_as_png_fxn(
-                plot_hrex_transition_matrix, hrex_diagnostics.transition_matrix, prefix=combined_prefix
+                plot_hrex_transition_matrix, diagnostics.transition_matrix, prefix=combined_prefix
             ),
             swap_acceptance_rates_convergence_png=plot_as_png_fxn(
                 plot_hrex_swap_acceptance_rates_convergence,
-                hrex_diagnostics.cumulative_swap_acceptance_rates,
+                diagnostics.cumulative_swap_acceptance_rates,
                 prefix=combined_prefix,
             ),
             replica_state_distribution_heatmap_png=plot_as_png_fxn(
                 plot_hrex_replica_state_distribution_heatmap,
-                hrex_diagnostics.cumulative_replica_state_counts,
+                diagnostics.cumulative_replica_state_counts,
                 [state.lamb for state in initial_states_hrex],
                 prefix=combined_prefix,
             ),
         )
         return HREXSimulationResult(
-            pair_bar_result,
-            plots,
-            trajectories_by_state,
-            md_params,
-            results,
-            hrex_diagnostics,
-            hrex_plots,
-            water_sampling_diagnostics=ws_diagnostics,
+            pair_bar_result, plots, trajectories_by_state, md_params, results, diagnostics, hrex_plots
         )
 
     except Exception as err:
@@ -1077,8 +1070,8 @@ def run_vacuum(
     min_overlap: Optional[float] = None,
     min_cutoff: Optional[float] = None,
 ):
-    if md_params is not None and md_params.local_md_params is not None:
-        md_params = replace(md_params, local_md_params=None)
+    if md_params is not None and md_params.local_steps > 0:
+        md_params = replace(md_params, local_steps=0)
         warnings.warn("Vacuum simulations don't support local steps, will use all global steps")
     if md_params is not None and md_params.water_sampling_params is not None:
         md_params = replace(md_params, water_sampling_params=None)

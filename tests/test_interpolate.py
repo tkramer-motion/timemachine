@@ -1016,7 +1016,7 @@ def test_assert_bonds_present_during_chiral_interpolation():
 
 
 def get_pfkfb3_nitrile_to_amide_fwd():
-    with path_to_internal_file("timemachine.testsystems.fep_benchmark.pfkfb3", "ligands.sdf") as path:
+    with path_to_internal_file("timemachine.datasets.fep_benchmark.pfkfb3", "ligands.sdf") as path:
         mols_by_name = read_sdf_mols_by_name(path)
     mol_a = mols_by_name["24"]
     mol_b = mols_by_name["26"]
@@ -1105,8 +1105,6 @@ def test_assert_torsions_defined_over_non_linear_angles(mol_a, mol_b, core, monk
 
     monkeypatch.setattr(single_topology, "CORE_TORSION_OFF_TO_ON_MIN_MAX", [0.0, 1.0])
     monkeypatch.setattr(single_topology, "CORE_TORSION_ON_TO_OFF_MIN_MAX", [0.0, 1.0])
-    # re-align since min/maxes are changed.
-    st.aligned_proper = st._align_propers()
 
     def assert_fn(lam):
         vs = st.setup_intermediate_state(lam)

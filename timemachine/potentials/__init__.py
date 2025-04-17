@@ -6,7 +6,7 @@ from .potentials import (
     FanoutSummedPotential,
     FlatBottomBond,
     HarmonicAngle,
-    HarmonicAngleStable,  # deprecated
+    HarmonicAngleStable,
     HarmonicBond,
     LogFlatBottomBond,
     Nonbonded,
