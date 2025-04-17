@@ -1,27 +1,32 @@
 import base64
+import os
 import pickle
+import subprocess
+import tempfile
 import warnings
 from collections import Counter
+from shutil import which
+from typing import Optional
 
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 from jax import jit, vmap
 from numpy.typing import NDArray
+from openff.toolkit import unit, AmberToolsToolkitWrapper, Molecule
+from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper
+from openff.toolkit.utils.exceptions import (
+    AntechamberNotFoundError,
+    ChargeCalculationError,
+)
+from openff.units import Quantity
 from rdkit import Chem
+from rdkit.Chem import AllChem
 
 from timemachine import constants
-from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel
-from timemachine.ff.handlers.bcc_aromaticity import match_smirks as oe_match_smirks
+from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel, match_smirks as oe_match_smirks
 from timemachine.ff.handlers.serialize import SerializableMixIn
-from timemachine.ff.handlers.utils import (
-    canonicalize_bond,
-    get_query_mol,
-    make_residue_mol,
-    make_residue_mol_from_template,
-    update_mol_topology,
-)
-from timemachine.ff.handlers.utils import match_smirks as rd_match_smirks
+from timemachine.ff.handlers.utils import canonicalize_bond, get_query_mol, make_residue_mol, make_residue_mol_from_template, update_mol_topology, match_smirks as rd_match_smirks
 from timemachine.graph_utils import convert_to_nx
 
 CACHE_SUFFIX = "Cache"
@@ -150,8 +155,183 @@ def oe_assign_charges(mol, charge_model=AM1BCCELF10):
     return inlined_constant * partial_charges[inv_permutation]
 
 
+def rdkit_generate_conformations(mol):
+    AllChem.EmbedMultipleConfs(
+        mol,
+        numConfs=800,
+        clearConfs=True,
+        pruneRmsThresh=1.0
+    )
+
+
+def rdkit_assign_partial_charges(
+        molecule: "Molecule",
+        partial_charge_method: Optional[str] = None,
+        use_conformers: Optional[list[Quantity]] = None,
+        strict_n_conformers: bool = False,
+        normalize_partial_charges: bool = True,
+        _cls=None,
+):
+    if partial_charge_method is None:
+        partial_charge_method = "am1-mulliken"
+    else:
+        # Standardize method name for string comparisons
+        partial_charge_method = partial_charge_method.lower()
+
+    if partial_charge_method not in AmberToolsToolkitWrapper._supported_charge_methods:
+        raise ChargeMethodUnavailableError(
+            f"partial_charge_method '{partial_charge_method}' is not available from AmberToolsToolkitWrapper. "
+            f"Available charge methods are {AmberToolsToolkitWrapper._supported_charge_methods}"
+        )
+
+    charge_method = AmberToolsToolkitWrapper._supported_charge_methods[partial_charge_method]
+
+    if _cls is None:
+        _cls = Molecule
+
+    # Make a temporary copy of the molecule, since we'll be messing with its conformers
+    mol_copy = _cls(molecule)
+
+    rdkit_toolkit_wrapper = rdkit_wrapper.RDKitToolkitWrapper()
+
+    if use_conformers is None:
+        if charge_method["rec_confs"] == 0:
+            mol_copy._conformers = None
+        else:
+            mol_copy.generate_conformers(
+                n_conformers=charge_method["rec_confs"],
+                rms_cutoff=0.25 * unit.angstrom,
+                toolkit_registry=rdkit_toolkit_wrapper,
+            )
+        # TODO: What's a "best practice" RMS cutoff to use here?
+    else:
+        mol_copy._conformers = None
+        for conformer in use_conformers:
+            mol_copy._add_conformer(conformer)
+        AmberToolsToolkitWrapper._check_n_conformers(None,
+                                                     mol_copy,
+                                                     partial_charge_method=partial_charge_method,
+                                                     min_confs=charge_method["min_confs"],
+                                                     max_confs=charge_method["max_confs"],
+                                                     strict_n_conformers=strict_n_conformers,
+                                                     )
+
+    ANTECHAMBER_PATH = which("antechamber")
+    if ANTECHAMBER_PATH is None:
+        raise AntechamberNotFoundError(
+            "Antechamber not found, cannot run assign_partial_charges()"
+        )
+
+    # Compute charges
+    with tempfile.TemporaryDirectory() as tmpdir:
+        net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
+        # Write out molecule in SDF format
+        # TODO: How should we handle multiple conformers?
+        rdkit_toolkit_wrapper.to_file(
+            mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
+        )
+        # Compute desired charges
+        # TODO: Add error handling if antechamber chokes
+        short_charge_method = charge_method["antechamber_keyword"]
+        subprocess.check_output(
+            [
+                "antechamber",
+                "-i",
+                "molecule.sdf",
+                "-fi",
+                "sdf",
+                "-o",
+                "charged.mol2",
+                "-fo",
+                "mol2",
+                "-pf",
+                "yes",
+                "-dr",
+                "n",
+                "-c",
+                str(short_charge_method),
+                "-nc",
+                str(net_charge),
+                "-eq",
+                "2",
+                "-df",
+                "0"
+            ],
+            cwd=tmpdir,
+        )
+        # Write out just charges
+        subprocess.check_output(
+            [
+                "antechamber",
+                "-dr",
+                "n",
+                "-i",
+                "charged.mol2",
+                "-fi",
+                "mol2",
+                "-o",
+                "charges2.mol2",
+                "-fo",
+                "mol2",
+                "-c",
+                "wc",
+                "-cf",
+                "charges.txt",
+                "-pf",
+                "yes",
+            ],
+            cwd=tmpdir,
+        )
+        # Check to ensure charges were actually produced
+        if not os.path.exists(f"{tmpdir}/charges.txt"):
+            # TODO: copy files into local directory to aid debugging?
+            raise ChargeCalculationError(
+                "Antechamber/sqm partial charge calculation failed on "
+                f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
+            )
+        # Read the charges
+        with open(f"{tmpdir}/charges.txt") as infile:
+            contents = infile.read()
+        text_charges = contents.split()
+        charges_array = np.zeros([molecule.n_atoms], np.float64)
+        for index, token in enumerate(text_charges):
+            charges_array[index] = float(token)
+        # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
+    molecule.partial_charges = Quantity(charges_array, unit.elementary_charge)
+
+    if normalize_partial_charges:
+        molecule._normalize_partial_charges()
+
+
+def rdkit_assign_charges(rdmol):
+    rdkit_generate_conformations(rdmol)
+
+    mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
+    mol.apply_elf_conformer_selection()
+
+    partial_charges = []
+    for conformer in mol.conformers:
+        rdkit_assign_partial_charges(mol, "am1bcc", use_conformers=[conformer], normalize_partial_charges=True)
+        partial_charges.append(mol.partial_charges)
+
+    partial_charges = np.array(partial_charges)
+    partial_charges = np.average(partial_charges, axis=0)
+
+    # Verify that the charges sum up to an integer
+    net_charge = np.sum(partial_charges)
+    net_charge_is_integral = np.isclose(net_charge, np.round(net_charge), atol=1e-5)
+    assert net_charge_is_integral, f"Charge is not an integer: {net_charge}"
+
+    # https://github.com/proteneer/timemachine#forcefield-gotchas
+    # "The charges have been multiplied by sqrt(ONE_4PI_EPS0) as an optimization."
+    inlined_constant = np.sqrt(constants.ONE_4PI_EPS0)
+
+    # returned charges are in TM units, in original atom ordering
+    return inlined_constant * partial_charges
+
+
 def generate_exclusion_idxs(
-    mol: Chem.Mol, scale12: float, scale13: float, scale14_lj: float, scale14_q: float
+        mol: Chem.Mol, scale12: float, scale13: float, scale14_lj: float, scale14_q: float
 ) -> tuple[NDArray, NDArray]:
     """
     Generate exclusions for a mol based on the all pairs shortest path.
@@ -697,7 +877,7 @@ class EnvironmentBCCHandler(SerializableMixIn):
             update_mol_topology(topology_res_mol, template_res_mol)
 
             # cache smirks patterns to speed up parameterize,
-            initial_res_charges = self.initial_charges[cur_atom : cur_atom + n_atoms]
+            initial_res_charges = self.initial_charges[cur_atom: cur_atom + n_atoms]
             self._compute_res_charges(tfr.name, topology_res_mol, initial_res_charges, params)
 
             self.all_res_mols_by_name[tfr.name] = topology_res_mol
@@ -727,7 +907,7 @@ class EnvironmentBCCHandler(SerializableMixIn):
         template_cached_charges = {}
         for tfr in self.template_for_residue:
             n_atoms = len(tfr.atoms)
-            initial_res_charges = self.initial_charges[cur_atom : cur_atom + n_atoms]
+            initial_res_charges = self.initial_charges[cur_atom: cur_atom + n_atoms]
 
             # not a template residue, so skip
             if tfr.name not in self.all_res_mols_by_name:
