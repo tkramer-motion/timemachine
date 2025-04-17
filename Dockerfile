@@ -99,3 +99,5 @@ ARG ENV_NAME=timemachine
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
+COPY mopac.sh /opt/conda/envs/${ENV_NAME}/bin/mopac.sh
+RUN chmod 775 /opt/conda/envs/${ENV_NAME}/bin/mopac.sh
