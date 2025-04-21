@@ -158,25 +158,20 @@ def oe_assign_charges(mol, charge_model=AM1BCCELF10):
 def rdkit_generate_conformations(mol):
     ri = mol.GetRingInfo()
     largest_ring_size = max((len(r) for r in ri.AtomRings()), default=0)
-    if largest_ring_size > 12:
+    if largest_ring_size > 10:
+        print("Detected macrocycle")
         params = Chem.rdDistGeom.ETKDGv3()
-        params.pruneRmsThresh = 1.0
-        params.clearConfs = True
-
-        AllChem.EmbedMultipleConfs(
-            mol,
-            800,
-            params
-        )
     else:
-        AllChem.EmbedMultipleConfs(
-            mol,
-            numConfs=800,
-            clearConfs=True,
-            numThreads=8,
-            enforceChirality=True,
-            pruneRmsThresh=1.0
-        )
+        params = Chem.rdDistGeom.srETKDGv3()
+
+    params.pruneRmsThresh = 1.0
+    params.clearConfs = True
+
+    AllChem.EmbedMultipleConfs(
+        mol,
+        800,
+        params
+    )
 
 
 def rdkit_assign_partial_charges(
