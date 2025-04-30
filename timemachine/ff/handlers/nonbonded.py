@@ -309,7 +309,7 @@ def rdkit_assign_charges(_rdmol):
     partial_charges = []
     for i, conformer in enumerate(mol.conformers):
         try:
-            rdkit_assign_partial_charges(mol, "am1bcc", use_conformers=[conformer], normalize_partial_charges=True)
+            rdkit_assign_partial_charges(mol, "resp", use_conformers=[conformer], normalize_partial_charges=True)
             partial_charges.append(mol.partial_charges)
         except subprocess.CalledProcessError as e:
             print(f"Error assigning partial charges for conformer {i}: {e}")
