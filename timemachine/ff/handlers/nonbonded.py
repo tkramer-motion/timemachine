@@ -5,20 +5,12 @@ import subprocess
 import tempfile
 import warnings
 from collections import Counter
-from shutil import which
 
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 from jax import jit, vmap
 from numpy.typing import NDArray
-from openff.toolkit import unit, AmberToolsToolkitWrapper, Molecule, RDKitToolkitWrapper
-from openff.toolkit.utils import ChargeMethodUnavailableError, rdkit_wrapper
-from openff.toolkit.utils.exceptions import (
-    AntechamberNotFoundError,
-    ChargeCalculationError,
-)
-from openff.units import Quantity
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
@@ -174,151 +166,44 @@ def rdkit_generate_conformations(mol):
     )
 
 
-def rdkit_assign_partial_charges(
-        molecule: Molecule,
-        partial_charge_method: str,
-        use_conformers: list[Quantity],
-        strict_n_conformers: bool = False,
-        normalize_partial_charges: bool = True,
-        _cls=None,
-):
-    # partial_charge_method = partial_charge_method.lower()
-    #
-    # charge_method = {
-    #         "antechamber_keyword": "resp",
-    #         "min_confs": 1,
-    #         "max_confs": 1,
-    #         "rec_confs": 1,
-    #     }
-
-    if _cls is None:
-        _cls = Molecule
-
-    # Make a temporary copy of the molecule, since we'll be messing with its conformers
-    mol_copy = _cls(molecule)
-
-    rdkit_toolkit_wrapper = rdkit_wrapper.RDKitToolkitWrapper()
-
-    mol_copy._conformers = None
-    for conformer in use_conformers:
-        mol_copy._add_conformer(conformer)
-    # AmberToolsToolkitWrapper._check_n_conformers(None,
-    #                                              mol_copy,
-    #                                              partial_charge_method=partial_charge_method,
-    #                                              min_confs=charge_method["min_confs"],
-    #                                              max_confs=charge_method["max_confs"],
-    #                                              strict_n_conformers=strict_n_conformers,
-    #                                              )
-
-    # ANTECHAMBER_PATH = which("antechamber")
-    # if ANTECHAMBER_PATH is None:
-    #     raise AntechamberNotFoundError(
-    #         "Antechamber not found, cannot run assign_partial_charges()"
-    #     )
-
-    # Compute charges
+def rdkit_assign_charges(rdmol):
     with tempfile.TemporaryDirectory() as tmpdir:
-        # net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
-        # Write out molecule in SDF format
-        rdkit_toolkit_wrapper.to_file(
-            mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
-        )
+        with Chem.SDWriter(os.path.join(tmpdir, "molecule.sdf")) as w:
+            w.write(rdmol)
         subprocess.check_output(["assign_charges.sh", f"{tmpdir}/molecule.sdf"], cwd=tmpdir)
-        # Compute desired charges
-        # short_charge_method = charge_method["antechamber_keyword"]
-        # subprocess.check_output(
-        #     [
-        #         "antechamber",
-        #         "-i",
-        #         "molecule.sdf",
-        #         "-fi",
-        #         "sdf",
-        #         "-o",
-        #         "charged.mol2",
-        #         "-fo",
-        #         "mol2",
-        #         "-pf",
-        #         "yes",
-        #         "-dr",
-        #         "n",
-        #         "-c",
-        #         str(short_charge_method),
-        #         "-nc",
-        #         str(net_charge),
-        #         "-eq",
-        #         "2",
-        #         "-df",
-        #         "0"
-        #     ],
-        #     cwd=tmpdir,
-        # )
-        # # Write out just charges
-        # subprocess.check_output(
-        #     [
-        #         "antechamber",
-        #         "-dr",
-        #         "n",
-        #         "-i",
-        #         "charged.mol2",
-        #         "-fi",
-        #         "mol2",
-        #         "-o",
-        #         "charges2.mol2",
-        #         "-fo",
-        #         "mol2",
-        #         "-c",
-        #         "wc",
-        #         "-cf",
-        #         "charges.txt",
-        #         "-pf",
-        #         "yes",
-        #     ],
-        #     cwd=tmpdir,
-        # )
-        # Check to ensure charges were actually produced
         if not os.path.exists(f"{tmpdir}/charges.txt"):
-            raise ChargeCalculationError(
-                "Antechamber/sqm partial charge calculation failed on "
-                f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
+            raise ValueError(
+                "Partial charge calculation failed on "
+                f"molecule {rdmol.GetProp('_Name')}"
             )
         # Read the charges
         with open(f"{tmpdir}/charges.txt") as infile:
             contents = infile.read()
-        text_charges = contents.split(",")
-        charges_array = np.zeros([molecule.n_atoms], np.float64)
-        for index, token in enumerate(text_charges):
-            charges_array[index] = float(token)
-        # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
-    molecule.partial_charges = Quantity(charges_array, unit.elementary_charge)
+        partial_charges = np.zeros([rdmol.GetNumAtoms()], np.float64)
+        for index, token in enumerate(contents.split(",")):
+            partial_charges[index] = float(token)
+    # rdkit_generate_conformations(rdmol)
+    #
+    # print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
+    #
+    # mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
+    # mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper(), rms_tolerance=1.0 * unit.angstrom)
+    #
+    # print(f"Selected {len(mol.conformers)} RDKit conformers")
+    #
+    # partial_charges = []
+    # for i, conformer in enumerate(mol.conformers):
+    #     try:
+    #         rdkit_assign_partial_charges(mol, "resp", use_conformers=[conformer], normalize_partial_charges=True)
+    #         partial_charges.append(mol.partial_charges)
+    #     except subprocess.CalledProcessError as e:
+    #         print(f"Error assigning partial charges for conformer {i}: {e}")
+    #
+    # if not partial_charges:
+    #     raise ValueError("No charges could be assigned to any conformer")
 
-    if normalize_partial_charges:
-        molecule._normalize_partial_charges()
-
-
-def rdkit_assign_charges(_rdmol):
-    rdmol = Chem.Mol(_rdmol)
-    rdkit_generate_conformations(rdmol)
-
-    print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
-
-    mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
-    mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper(), rms_tolerance=1.0 * unit.angstrom)
-
-    print(f"Selected {len(mol.conformers)} RDKit conformers")
-
-    partial_charges = []
-    for i, conformer in enumerate(mol.conformers):
-        try:
-            rdkit_assign_partial_charges(mol, "resp", use_conformers=[conformer], normalize_partial_charges=True)
-            partial_charges.append(mol.partial_charges)
-        except subprocess.CalledProcessError as e:
-            print(f"Error assigning partial charges for conformer {i}: {e}")
-
-    if not partial_charges:
-        raise ValueError("No charges could be assigned to any conformer")
-
-    partial_charges = np.array(partial_charges)
-    partial_charges = np.average(partial_charges, axis=0)
+    # partial_charges = np.array(charges_array)
+    # partial_charges = np.average(partial_charges, axis=0)
 
     # Verify that the charges sum up to an integer
     net_charge = np.sum(partial_charges)
