@@ -184,12 +184,6 @@ def rdkit_assign_partial_charges(
 ):
     partial_charge_method = partial_charge_method.lower()
 
-    if partial_charge_method not in AmberToolsToolkitWrapper._supported_charge_methods:
-        raise ChargeMethodUnavailableError(
-            f"partial_charge_method '{partial_charge_method}' is not available from AmberToolsToolkitWrapper. "
-            f"Available charge methods are {AmberToolsToolkitWrapper._supported_charge_methods}"
-        )
-
     charge_method = {
             "antechamber_keyword": "resp",
             "min_confs": 1,
