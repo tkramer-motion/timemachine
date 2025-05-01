@@ -190,7 +190,12 @@ def rdkit_assign_partial_charges(
             f"Available charge methods are {AmberToolsToolkitWrapper._supported_charge_methods}"
         )
 
-    charge_method = AmberToolsToolkitWrapper._supported_charge_methods[partial_charge_method]
+    charge_method = {
+            "antechamber_keyword": "resp",
+            "min_confs": 1,
+            "max_confs": 1,
+            "rec_confs": 1,
+        }
 
     if _cls is None:
         _cls = Molecule
