@@ -182,14 +182,14 @@ def rdkit_assign_partial_charges(
         normalize_partial_charges: bool = True,
         _cls=None,
 ):
-    partial_charge_method = partial_charge_method.lower()
-
-    charge_method = {
-            "antechamber_keyword": "resp",
-            "min_confs": 1,
-            "max_confs": 1,
-            "rec_confs": 1,
-        }
+    # partial_charge_method = partial_charge_method.lower()
+    #
+    # charge_method = {
+    #         "antechamber_keyword": "resp",
+    #         "min_confs": 1,
+    #         "max_confs": 1,
+    #         "rec_confs": 1,
+    #     }
 
     if _cls is None:
         _cls = Molecule
@@ -202,78 +202,79 @@ def rdkit_assign_partial_charges(
     mol_copy._conformers = None
     for conformer in use_conformers:
         mol_copy._add_conformer(conformer)
-    AmberToolsToolkitWrapper._check_n_conformers(None,
-                                                 mol_copy,
-                                                 partial_charge_method=partial_charge_method,
-                                                 min_confs=charge_method["min_confs"],
-                                                 max_confs=charge_method["max_confs"],
-                                                 strict_n_conformers=strict_n_conformers,
-                                                 )
+    # AmberToolsToolkitWrapper._check_n_conformers(None,
+    #                                              mol_copy,
+    #                                              partial_charge_method=partial_charge_method,
+    #                                              min_confs=charge_method["min_confs"],
+    #                                              max_confs=charge_method["max_confs"],
+    #                                              strict_n_conformers=strict_n_conformers,
+    #                                              )
 
-    ANTECHAMBER_PATH = which("antechamber")
-    if ANTECHAMBER_PATH is None:
-        raise AntechamberNotFoundError(
-            "Antechamber not found, cannot run assign_partial_charges()"
-        )
+    # ANTECHAMBER_PATH = which("antechamber")
+    # if ANTECHAMBER_PATH is None:
+    #     raise AntechamberNotFoundError(
+    #         "Antechamber not found, cannot run assign_partial_charges()"
+    #     )
 
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
-        net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
+        # net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
         # Write out molecule in SDF format
         rdkit_toolkit_wrapper.to_file(
             mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
         )
+        subprocess.check_output(["assign_charges.sh", f"{tmpdir}/molecule.sdf"], cwd=tmpdir)
         # Compute desired charges
-        short_charge_method = charge_method["antechamber_keyword"]
-        subprocess.check_output(
-            [
-                "antechamber",
-                "-i",
-                "molecule.sdf",
-                "-fi",
-                "sdf",
-                "-o",
-                "charged.mol2",
-                "-fo",
-                "mol2",
-                "-pf",
-                "yes",
-                "-dr",
-                "n",
-                "-c",
-                str(short_charge_method),
-                "-nc",
-                str(net_charge),
-                "-eq",
-                "2",
-                "-df",
-                "0"
-            ],
-            cwd=tmpdir,
-        )
-        # Write out just charges
-        subprocess.check_output(
-            [
-                "antechamber",
-                "-dr",
-                "n",
-                "-i",
-                "charged.mol2",
-                "-fi",
-                "mol2",
-                "-o",
-                "charges2.mol2",
-                "-fo",
-                "mol2",
-                "-c",
-                "wc",
-                "-cf",
-                "charges.txt",
-                "-pf",
-                "yes",
-            ],
-            cwd=tmpdir,
-        )
+        # short_charge_method = charge_method["antechamber_keyword"]
+        # subprocess.check_output(
+        #     [
+        #         "antechamber",
+        #         "-i",
+        #         "molecule.sdf",
+        #         "-fi",
+        #         "sdf",
+        #         "-o",
+        #         "charged.mol2",
+        #         "-fo",
+        #         "mol2",
+        #         "-pf",
+        #         "yes",
+        #         "-dr",
+        #         "n",
+        #         "-c",
+        #         str(short_charge_method),
+        #         "-nc",
+        #         str(net_charge),
+        #         "-eq",
+        #         "2",
+        #         "-df",
+        #         "0"
+        #     ],
+        #     cwd=tmpdir,
+        # )
+        # # Write out just charges
+        # subprocess.check_output(
+        #     [
+        #         "antechamber",
+        #         "-dr",
+        #         "n",
+        #         "-i",
+        #         "charged.mol2",
+        #         "-fi",
+        #         "mol2",
+        #         "-o",
+        #         "charges2.mol2",
+        #         "-fo",
+        #         "mol2",
+        #         "-c",
+        #         "wc",
+        #         "-cf",
+        #         "charges.txt",
+        #         "-pf",
+        #         "yes",
+        #     ],
+        #     cwd=tmpdir,
+        # )
         # Check to ensure charges were actually produced
         if not os.path.exists(f"{tmpdir}/charges.txt"):
             raise ChargeCalculationError(
@@ -283,7 +284,7 @@ def rdkit_assign_partial_charges(
         # Read the charges
         with open(f"{tmpdir}/charges.txt") as infile:
             contents = infile.read()
-        text_charges = contents.split()
+        text_charges = contents.split(",")
         charges_array = np.zeros([molecule.n_atoms], np.float64)
         for index, token in enumerate(text_charges):
             charges_array[index] = float(token)
