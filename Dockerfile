@@ -2,7 +2,7 @@
 ARG LIBXRENDER_VERSION=1:0.9.10-*
 ARG LIBXEXT_VERSION=2:1.3.4-*
 
-FROM docker.io/nvidia/cuda:12.4.1-devel-ubuntu20.04 AS tm_base_env
+FROM docker.io/nvidia/cuda:12.8.1-devel-ubuntu20.04 AS tm_base_env
 ARG LIBXRENDER_VERSION
 ARG LIBXEXT_VERSION
 
@@ -80,7 +80,7 @@ RUN pip install --no-cache-dir -e . && rm -rf ./build
 
 # Container with only cuda base, half the size of the timemachine_cuda_dev container
 # Need to copy curand/cudart as these are dependencies of the Timemachine GPU code
-FROM docker.io/nvidia/cuda:12.4.1-base-ubuntu20.04 AS timemachine
+FROM docker.io/nvidia/cuda:12.8.1-base-ubuntu20.04 AS timemachine
 ARG LIBXRENDER_VERSION
 ARG LIBXEXT_VERSION
 RUN (apt-get update || true) && apt-get install --no-install-recommends -y libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} \
@@ -99,5 +99,3 @@ ARG ENV_NAME=timemachine
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
-COPY mopac.sh /opt/conda/envs/${ENV_NAME}/bin/mopac.sh
-RUN chmod 775 /opt/conda/envs/${ENV_NAME}/bin/mopac.sh
