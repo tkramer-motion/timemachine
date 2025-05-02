@@ -182,33 +182,21 @@ def rdkit_assign_charges(rdmol):
         partial_charges = np.zeros([rdmol.GetNumAtoms()], np.float64)
         for index, token in enumerate(contents.split(",")):
             partial_charges[index] = float(token)
-    # rdkit_generate_conformations(rdmol)
-    #
-    # print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
-    #
-    # mol = Molecule.from_rdkit(rdmol, hydrogens_are_explicit=True)
-    # mol.apply_elf_conformer_selection(toolkit_registry=RDKitToolkitWrapper(), rms_tolerance=1.0 * unit.angstrom)
-    #
-    # print(f"Selected {len(mol.conformers)} RDKit conformers")
-    #
-    # partial_charges = []
-    # for i, conformer in enumerate(mol.conformers):
-    #     try:
-    #         rdkit_assign_partial_charges(mol, "resp", use_conformers=[conformer], normalize_partial_charges=True)
-    #         partial_charges.append(mol.partial_charges)
-    #     except subprocess.CalledProcessError as e:
-    #         print(f"Error assigning partial charges for conformer {i}: {e}")
-    #
-    # if not partial_charges:
-    #     raise ValueError("No charges could be assigned to any conformer")
 
-    # partial_charges = np.array(charges_array)
-    # partial_charges = np.average(partial_charges, axis=0)
+    expected_charge = Chem.GetFormalCharge(rdmol)
+
+    current_charge = 0.0
+    for pc in partial_charges:
+        current_charge += pc
+
+    charge_offset = (expected_charge - current_charge) / rdmol.GetNumAtoms()
+
+    partial_charges += charge_offset
 
     # Verify that the charges sum up to an integer
-    # net_charge = np.sum(partial_charges)
-    # net_charge_is_integral = np.isclose(net_charge, np.round(net_charge), atol=1e-5)
-    # assert net_charge_is_integral, f"Charge is not an integer: {net_charge}"
+    net_charge = np.sum(partial_charges)
+    net_charge_is_integral = np.isclose(net_charge, np.round(net_charge), atol=1e-5)
+    assert net_charge_is_integral, f"Charge is not an integer: {net_charge}"
 
     # https://github.com/proteneer/timemachine#forcefield-gotchas
     # "The charges have been multiplied by sqrt(ONE_4PI_EPS0) as an optimization."
