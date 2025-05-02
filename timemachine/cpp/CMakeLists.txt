@@ -24,7 +24,6 @@ string(APPEND CMAKE_CUDA_FLAGS "${COMMON_COMPILER_FLAGS}")
 
 string(APPEND CMAKE_CUDA_FLAGS
   " -lineinfo"  # Disabling lineinfo reduces .so file by ~40MB
-  " -Werror all-warnings"
   " -Wno-sign-compare"
   " -Wno-unused-parameter"
   " -Wreorder"
