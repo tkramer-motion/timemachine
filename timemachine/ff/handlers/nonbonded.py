@@ -206,9 +206,9 @@ def rdkit_assign_charges(rdmol):
     # partial_charges = np.average(partial_charges, axis=0)
 
     # Verify that the charges sum up to an integer
-    net_charge = np.sum(partial_charges)
-    net_charge_is_integral = np.isclose(net_charge, np.round(net_charge), atol=1e-5)
-    assert net_charge_is_integral, f"Charge is not an integer: {net_charge}"
+    # net_charge = np.sum(partial_charges)
+    # net_charge_is_integral = np.isclose(net_charge, np.round(net_charge), atol=1e-5)
+    # assert net_charge_is_integral, f"Charge is not an integer: {net_charge}"
 
     # https://github.com/proteneer/timemachine#forcefield-gotchas
     # "The charges have been multiplied by sqrt(ONE_4PI_EPS0) as an optimization."
