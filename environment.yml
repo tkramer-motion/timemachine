@@ -12,4 +12,3 @@ dependencies:
   - psi4
   - openff-recharge
   - mopac
-  - dacase::ambertools-dac=25
