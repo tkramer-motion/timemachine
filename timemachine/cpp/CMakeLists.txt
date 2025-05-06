@@ -11,7 +11,7 @@ set(PYBIND11_PYTHON_VERSION ${Python_VERSION} CACHE STRING "Which version of pyt
 
 set(DEBUG_BUILD "$ENV{DEBUG_BUILD}")
 
-set(COMMON_COMPILER_FLAGS)
+set(COMMON_COMPILER_FLAGS "-Wall -Wextra")
 if (NOT DEBUG_BUILD)
   string(APPEND COMMON_COMPILER_FLAGS " -O3")
 else()
@@ -24,6 +24,7 @@ string(APPEND CMAKE_CUDA_FLAGS "${COMMON_COMPILER_FLAGS}")
 
 string(APPEND CMAKE_CUDA_FLAGS
   " -lineinfo"  # Disabling lineinfo reduces .so file by ~40MB
+  " -Werror all-warnings"
   " -Wno-sign-compare"
   " -Wno-unused-parameter"
   " -Wreorder"

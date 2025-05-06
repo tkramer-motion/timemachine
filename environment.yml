@@ -8,3 +8,8 @@ dependencies:
   # Include numpy/scipy to reduce the size of the Docker container
   - numpy=2.2.2
   - scipy=1.15.1
+  - openff-toolkit
+  - psi4
+  - openff-recharge
+  - mopac
+  - dacase::ambertools-dac=25

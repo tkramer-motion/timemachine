@@ -1,18 +1,21 @@
 import base64
-import os
 import pickle
 import subprocess
-import tempfile
 import warnings
 from collections import Counter
 
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
+import psi4
 from jax import jit, vmap
 from numpy.typing import NDArray
+from openff.recharge.utilities.molecule import extract_conformers
+from openff.toolkit import unit, RDKitToolkitWrapper
+from openff.toolkit.topology import Molecule
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit.Geometry import Point3D
 
 from timemachine import constants
 from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel, match_smirks as oe_match_smirks
@@ -166,32 +169,129 @@ def rdkit_generate_conformations(mol):
     )
 
 
-def rdkit_assign_charges(rdmol):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with Chem.SDWriter(os.path.join(tmpdir, "molecule.sdf")) as w:
-            w.write(rdmol)
-        subprocess.check_output(["assign_charges.sh", f"{tmpdir}/molecule.sdf"], cwd=tmpdir)
-        if not os.path.exists(f"{tmpdir}/charges.txt"):
-            raise ValueError(
-                "Partial charge calculation failed on "
-                f"molecule {rdmol.GetProp('_Name')}"
-            )
-        # Read the charges
-        with open(f"{tmpdir}/charges.txt") as infile:
-            contents = infile.read()
-        partial_charges = np.zeros([rdmol.GetNumAtoms()], np.float64)
-        for index, token in enumerate(contents.split(",")):
-            partial_charges[index] = float(token)
+def atomic_num_to_symbol(atomic_num) -> str:
+    periodic_table = {1: 'H', 5: 'B', 6: 'C', 7: 'N', 8: 'O', 9: 'F',
+                      12: 'Si', 15: 'P', 16: 'S', 17: 'Cl', 34: 'Se', 35: 'Br',
+                      53: 'I'}
 
-    expected_charge = Chem.GetFormalCharge(rdmol)
+    return periodic_table.get(atomic_num, "X")
 
-    current_charge = 0.0
-    for pc in partial_charges:
-        current_charge += pc
 
-    charge_offset = (expected_charge - current_charge) / rdmol.GetNumAtoms()
+def grab_optimized_coord(output_name) -> list[list[float]]:
+    fin = open(output_name, 'r')
+    n = 0
 
-    partial_charges += charge_offset
+    coord = []
+    while 1:
+        line = fin.readline()
+        if not line: break
+        if line.find('CARTESIAN COORDINATES') > -1:
+            n += 1
+        if n == 2:
+            fin.readline()
+            while 1:
+                line = fin.readline()
+                line = line.split()
+                if len(line) == 5:
+                    coord.append([float(line[2]), float(line[3]), float(line[4])])
+                else:
+                    n = 0
+                    break
+    return coord
+
+
+def compute_am1bcc_charges(m: Chem.Mol):
+    theory = "PM7"
+    threads = 4
+    dielectric = 78.4
+    mopac_root_card = 'MMOK DISP AUX(MOS=99999) THREADS=' + str(threads) + ' ' + theory + ' EPS=' + str(dielectric) + ' XYZ\n\n\n'
+
+    filename = 'molecule_aq.mop'
+    with open(filename, 'w') as fout:
+        fout.write(mopac_root_card)
+        for i, atom in enumerate(m.GetAtoms()):
+            positions = m.GetConformer().GetAtomPosition(i)
+            fout.write('%s %.4f 1 %.4f 1 %.4f 1\n' % (atomic_num_to_symbol(atom.GetAtomicNum()), positions.x, positions.y, positions.z))
+        fout.write('\n')
+        fout.close()
+        print('Running optimization for %s' % (filename))
+        subprocess.check_output(["mopac", filename])
+        coords = grab_optimized_coord("molecule_aq.out")
+
+        xyz = []
+        for i, (atom, row) in enumerate(zip(m.GetAtoms(), coords)):
+            m.GetConformer().SetAtomPosition(i, Point3D(*row))
+            xyz.append(f"{atom.GetSymbol()} {row[0]} {row[1]} {row[2]}")
+
+        print("\n".join(xyz))
+        psi4.set_options({'scf_type': 'DIRECT', 'Reference': "RHF"})
+        psi4.set_memory('500 MB')
+        psi4.set_num_threads(2)
+        psi4.geometry(f"{Chem.GetFormalCharge(m)} {1}\n" + "\n".join(xyz))
+        E, wfn = psi4.energy('B3LYP/6-31G**', return_wfn=True)
+        oeprop = psi4.core.OEProp(wfn)
+        oeprop.add("MULLIKEN_CHARGES")
+        oeprop.compute()
+
+    print(Chem.MolToMolBlock(m), file=open('molecule.sdf', 'w+'))
+
+    np.savetxt("am1charges.txt", wfn.atomic_point_charges().np, delimiter=" ")
+    subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-fi", "sdf", "-fo", "ac", "-o", "molecule.ac", "-at", "bcc", "-c", "rc", "-cf", "am1charges.txt"])
+    subprocess.check_output(["am1bcc", "-i", "molecule.ac", "-o", "charges.ac", "-t", "bcc", "-j", "4"])
+    subprocess.check_output(
+        [
+            "antechamber",
+            "-dr",
+            "n",
+            "-i",
+            "molecule.ac",
+            "-fi",
+            "ac",
+            "-o",
+            "charges2.mol2",
+            "-fo",
+            "mol2",
+            "-c",
+            "wc",
+            "-cf",
+            "charges.txt",
+            "-pf",
+            "yes",
+        ],
+    )
+
+    with open("charges.txt") as infile:
+        contents = infile.read()
+    text_charges = contents.split()
+    charges_array = np.zeros([m.GetNumAtoms()], np.float64)
+    for index, token in enumerate(text_charges):
+        charges_array[index] = float(token)
+
+    return charges_array
+
+
+def rdkit_assign_charges(_rdmol):
+    rdmol = Chem.Mol(_rdmol)
+    rdkit_generate_conformations(rdmol)
+
+    print(f"Generated {rdmol.GetNumConformers()} RDKit conformers")
+
+    molecule: Molecule = Molecule.from_rdkit(rdmol)
+    molecule.apply_elf_conformer_selection(limit=5, toolkit_registry=RDKitToolkitWrapper(), rms_tolerance=1.0 * unit.angstrom)
+
+    print(f"Selected {len(molecule.conformers)} RDKit conformers")
+
+    conformers = extract_conformers(molecule)
+
+    charges = []
+    for input_conformer in conformers:
+        mol_copy = Molecule(molecule)
+        mol_copy._conformers = None
+        mol_copy._add_conformer(input_conformer)
+        charges.append(compute_am1bcc_charges(mol_copy.to_rdkit()))
+
+    partial_charges = np.array(charges)
+    partial_charges = np.average(partial_charges, axis=0)
 
     # Verify that the charges sum up to an integer
     net_charge = np.sum(partial_charges)
