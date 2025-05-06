@@ -224,7 +224,7 @@ def compute_am1bcc_charges(m: Chem.Mol):
             xyz.append(f"{atom.GetSymbol()} {row[0]} {row[1]} {row[2]}")
 
         psi4.set_options({'scf_type': 'DIRECT', 'Reference': "RHF"})
-        psi4.set_memory('500 MB')
+        psi4.set_memory('1024 MB')
         psi4.set_num_threads(4)
         psi4.geometry(f"{Chem.GetFormalCharge(m)} {1}\n" + "\n".join(xyz))
         E, wfn = psi4.energy('B3LYP/6-31G**', return_wfn=True)
