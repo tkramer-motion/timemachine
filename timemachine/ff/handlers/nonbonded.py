@@ -223,10 +223,9 @@ def compute_am1bcc_charges(m: Chem.Mol):
             m.GetConformer().SetAtomPosition(i, Point3D(*row))
             xyz.append(f"{atom.GetSymbol()} {row[0]} {row[1]} {row[2]}")
 
-        print("\n".join(xyz))
         psi4.set_options({'scf_type': 'DIRECT', 'Reference': "RHF"})
         psi4.set_memory('500 MB')
-        psi4.set_num_threads(2)
+        psi4.set_num_threads(4)
         psi4.geometry(f"{Chem.GetFormalCharge(m)} {1}\n" + "\n".join(xyz))
         E, wfn = psi4.energy('B3LYP/6-31G**', return_wfn=True)
         oeprop = psi4.core.OEProp(wfn)
@@ -292,6 +291,13 @@ def rdkit_assign_charges(_rdmol):
 
     partial_charges = np.array(charges)
     partial_charges = np.average(partial_charges, axis=0)
+
+    expected_charge = Chem.GetFormalCharge(rdmol)
+    current_charge = 0.0
+    for pc in partial_charges:
+        current_charge += pc
+    charge_offset = (expected_charge - current_charge) / rdmol.GetNumAtoms()
+    partial_charges += charge_offset
 
     # Verify that the charges sum up to an integer
     net_charge = np.sum(partial_charges)
