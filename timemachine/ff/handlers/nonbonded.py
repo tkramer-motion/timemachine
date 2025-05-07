@@ -226,32 +226,60 @@ def rdkit_assign_partial_charges(
         )
         # Compute desired charges
         short_charge_method = charge_method["antechamber_keyword"]
-        subprocess.check_output(
-            [
-                "antechamber",
-                "-i",
-                "molecule.sdf",
-                "-fi",
-                "sdf",
-                "-o",
-                "charged.mol2",
-                "-fo",
-                "mol2",
-                "-pf",
-                "yes",
-                "-dr",
-                "n",
-                "-c",
-                str(short_charge_method),
-                "-nc",
-                str(net_charge),
-                "-eq",
-                "2",
-                "-ek",
-                "maxcyc=200, qm_theory='AM1', itrmax=200"
-            ],
-            cwd=tmpdir,
-        )
+        try:
+            subprocess.check_output(
+                [
+                    "antechamber",
+                    "-i",
+                    "molecule.sdf",
+                    "-fi",
+                    "sdf",
+                    "-o",
+                    "charged.mol2",
+                    "-fo",
+                    "mol2",
+                    "-pf",
+                    "yes",
+                    "-dr",
+                    "n",
+                    "-c",
+                    str(short_charge_method),
+                    "-nc",
+                    str(net_charge),
+                    "-eq",
+                    "2",
+                    "-ek",
+                    "qm_theory='AM1'"
+                ],
+                cwd=tmpdir,
+            )
+        except subprocess.CalledProcessError:
+            subprocess.check_output(
+                [
+                    "antechamber",
+                    "-i",
+                    "molecule.sdf",
+                    "-fi",
+                    "sdf",
+                    "-o",
+                    "charged.mol2",
+                    "-fo",
+                    "mol2",
+                    "-pf",
+                    "yes",
+                    "-dr",
+                    "n",
+                    "-c",
+                    str(short_charge_method),
+                    "-nc",
+                    str(net_charge),
+                    "-eq",
+                    "2",
+                    "-ek",
+                    "maxcyc=0, qm_theory='AM1'"
+                ],
+                cwd=tmpdir,
+            )
         # Write out just charges
         subprocess.check_output(
             [
