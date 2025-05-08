@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import pickle
 import subprocess
@@ -6,7 +7,9 @@ import tempfile
 import warnings
 from collections import Counter
 from functools import partial
+from importlib import resources
 from multiprocessing.pool import ThreadPool
+from pathlib import Path
 from shutil import which
 
 import jax.numpy as jnp
@@ -14,7 +17,8 @@ import networkx as nx
 import numpy as np
 from jax import jit, vmap
 from numpy.typing import NDArray
-from openff.recharge.charges.bcc import BCCGenerator, original_am1bcc_corrections
+from openff.recharge.aromaticity import AromaticityModel, AromaticityModels
+from openff.recharge.charges.bcc import BCCGenerator, BCCCollection, BCCParameter
 from openff.recharge.utilities.molecule import extract_conformers
 from openff.toolkit import unit, AmberToolsToolkitWrapper, RDKitToolkitWrapper
 from openff.toolkit.topology import Molecule
@@ -340,7 +344,21 @@ def rdkit_assign_charges(_rdmol):
 
     am1_partial_charges = np.array(charges)
 
-    charge_corrections = BCCGenerator.generate(molecule, original_am1bcc_corrections())
+    path = Path("openeye-am1-bcc.json")
+    with resources.as_file(resources.files("timemachine.ff.params") / path.name) as rpath:
+        if rpath.exists():
+            with open(rpath) as file:
+                bcc_dictionaries = json.load(file)["parameters"]
+
+    bond_charge_corrections = [
+        BCCParameter(**dictionary) for dictionary in bcc_dictionaries
+    ]
+
+    bcc_collection = BCCCollection(
+        parameters=bond_charge_corrections, aromaticity_model=AromaticityModels.AM1BCC
+    )
+
+    charge_corrections = BCCGenerator.generate(molecule, bcc_collection)
     charge_corrections.resize(charge_corrections.shape[0])
 
     partial_charges = charge_corrections + np.average(am1_partial_charges, axis=0)

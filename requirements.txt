@@ -4,5 +4,4 @@ pymbar==4.0.3
 networkx==2.8.8
 matplotlib==3.10.0
 rdkit==2024.9.4
---extra-index-url https://pypi.anaconda.org/OpenEye/simple
 openmm==8.2.0
