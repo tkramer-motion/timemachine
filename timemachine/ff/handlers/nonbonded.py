@@ -2,6 +2,8 @@ import base64
 import json
 import os
 import pickle
+import re
+import statistics
 import subprocess
 import tempfile
 import warnings
@@ -26,6 +28,7 @@ from openff.toolkit.utils import ChargeCalculationError, AntechamberNotFoundErro
 from openff.units import Quantity
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from scipy.constants import physical_constants
 
 from timemachine import constants
 from timemachine.ff.handlers.bcc_aromaticity import AromaticityModel, match_smirks as oe_match_smirks
@@ -185,7 +188,7 @@ def rdkit_assign_partial_charges(
         use_conformers: list[Quantity],
         strict_n_conformers: bool = False,
         _cls=None,
-):
+) -> tuple[np.array, float]:
     partial_charge_method = partial_charge_method.lower()
 
     if partial_charge_method not in AmberToolsToolkitWrapper._supported_charge_methods:
@@ -321,7 +324,23 @@ def rdkit_assign_partial_charges(
         for index, token in enumerate(text_charges):
             charges_array[index] = float(token)
         # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
-    return charges_array
+
+        pat = re.compile(r"Total SCF energy\s+=\s+(.*)\s+kcal/mol")
+        with open(f"{tmpdir}/sqm.out") as f:
+            match = pat.search(f.read())
+            energy = float(match.group(1))
+
+    return charges_array, energy
+
+
+def boltzmann_weight(conformer_properties: np.array, conformer_energies: np.array, temp: float = 298.15) -> float:
+    energies = conformer_energies - np.min(conformer_energies)
+
+    R = physical_constants["kelvin-hartree relationship"][0]  # eH/K
+    weights = np.exp(-1 * energies / (627.509 * R * temp))
+    weights = weights / np.sum(weights)
+
+    return np.average(conformer_properties, weights=weights, axis=0)
 
 
 def rdkit_assign_charges(_rdmol):
@@ -338,11 +357,14 @@ def rdkit_assign_charges(_rdmol):
     conformers = extract_conformers(molecule)
 
     charges = []
+    energies = []
     with ThreadPool(4) as pool:
-        for chs in pool.map(partial(rdkit_assign_partial_charges, molecule, "am1-mulliken"), [[c] for c in conformers]):
+        for chs, energy in pool.map(partial(rdkit_assign_partial_charges, molecule, "am1-mulliken"), [[c] for c in conformers]):
             charges.append(chs)
+            energies.append(energy)
 
     am1_partial_charges = np.array(charges)
+    energies = np.array(energies)
 
     path = Path("openeye-am1-bcc.json")
     with resources.as_file(resources.files("timemachine.ff.params") / path.name) as rpath:
@@ -361,6 +383,7 @@ def rdkit_assign_charges(_rdmol):
     charge_corrections = BCCGenerator.generate(molecule, bcc_collection)
     charge_corrections.resize(charge_corrections.shape[0])
 
+    # partial_charges = charge_corrections + boltzmann_weight(am1_partial_charges, energies)
     partial_charges = charge_corrections + np.average(am1_partial_charges, axis=0)
 
     expected_charge = Chem.GetFormalCharge(rdmol)
