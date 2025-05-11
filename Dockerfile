@@ -76,7 +76,7 @@ ENV CMAKE_ARGS="-DCUDA_ARCH:STRING=${CUDA_ARCH}"
 COPY . /code/timemachine/
 WORKDIR /code/timemachine/
 RUN pip install --no-cache-dir -e . && rm -rf ./build
-RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
+RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/ && make install
 
 # Container with only cuda base, half the size of the timemachine_cuda_dev container
 # Need to copy curand/cudart as these are dependencies of the Timemachine GPU code
