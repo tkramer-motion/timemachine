@@ -67,9 +67,6 @@ RUN pip install --no-cache-dir -r timemachine/ci/requirements.txt
 COPY .pre-commit-config.yaml /code/timemachine/
 RUN cd /code/timemachine && git init . && pre-commit install-hooks
 
-RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
-
-
 # Container that contains the cuda developer tools which allows building the customs ops
 # Used as an intermediate for creating a final slimmed down container with timemachine and only the cuda runtime
 FROM tm_base_env AS timemachine_cuda_dev
@@ -79,6 +76,7 @@ ENV CMAKE_ARGS="-DCUDA_ARCH:STRING=${CUDA_ARCH}"
 COPY . /code/timemachine/
 WORKDIR /code/timemachine/
 RUN pip install --no-cache-dir -e . && rm -rf ./build
+RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
 
 # Container with only cuda base, half the size of the timemachine_cuda_dev container
 # Need to copy curand/cudart as these are dependencies of the Timemachine GPU code
