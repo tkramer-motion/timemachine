@@ -3,14 +3,12 @@ import json
 import os
 import pickle
 import re
-import statistics
 import subprocess
 import tempfile
 import warnings
 from collections import Counter
 from functools import partial
 from importlib import resources
-from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from shutil import which
 
@@ -226,7 +224,7 @@ def rdkit_assign_partial_charges(
 
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
-    # if 1:
+        # if 1:
         # tmpdir = tempfile.mkdtemp()
         # print(tmpdir)
         net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
@@ -293,7 +291,7 @@ def rdkit_assign_partial_charges(
         rows = []
         with open(f"{tmpdir}/molecule.out") as infile:
             for line in infile:
-                if "DIPOLE" in line:
+                if "TOTAL" in line:
                     start = False
                 if "MULLIKEN" in line:
                     start = True
@@ -305,7 +303,7 @@ def rdkit_assign_partial_charges(
             charges_array[index] = float(token)
         # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
 
-        pat = re.compile(r"MINIMIZED ENERGY\s+=\s+(.*)\s+")
+        pat = re.compile(r"TOTAL ENERGY\s+=\s+(.*)\s+")
         with open(f"{tmpdir}/molecule.out") as f:
             match = pat.search(f.read())
             energy = float(match.group(1))
