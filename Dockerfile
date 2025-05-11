@@ -11,7 +11,7 @@ ARG MAKE_VERSION=4.2.1-1.2
 ARG GIT_VERSION=1:2.25.1-*
 ARG WGET_VERSION=1.20.3-*
 RUN (apt-get update || true)  && apt-get install --no-install-recommends -y \
-    wget=${WGET_VERSION} git=${GIT_VERSION} make=${MAKE_VERSION} libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} \
+    wget=${WGET_VERSION} git=${GIT_VERSION} make=${MAKE_VERSION} libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} gfortran \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -67,7 +67,7 @@ RUN pip install --no-cache-dir -r timemachine/ci/requirements.txt
 COPY .pre-commit-config.yaml /code/timemachine/
 RUN cd /code/timemachine && git init . && pre-commit install-hooks
 
-RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=TRUE -DCUDA=FALSE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
+RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
 
 
 # Container that contains the cuda developer tools which allows building the customs ops
