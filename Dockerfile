@@ -99,3 +99,4 @@ ARG ENV_NAME=timemachine
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
+ENV QUICK_BASIS /opt/conda/envs/timemachine/AmberTools/src/quick/basis/

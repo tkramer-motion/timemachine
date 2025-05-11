@@ -226,6 +226,9 @@ def rdkit_assign_partial_charges(
 
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
+    # if 1:
+        # tmpdir = tempfile.mkdtemp()
+        # print(tmpdir)
         net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
         # Write out molecule in SDF format
         rdkit_toolkit_wrapper.to_file(
@@ -242,9 +245,9 @@ def rdkit_assign_partial_charges(
                     "-fi",
                     "sdf",
                     "-o",
-                    "charged.mol2",
+                    "charged.sdf",
                     "-fo",
-                    "mol2",
+                    "sdf",
                     "-pf",
                     "yes",
                     "-dr",
@@ -260,73 +263,50 @@ def rdkit_assign_partial_charges(
                 ],
                 cwd=tmpdir,
             )
+            m = Chem.MolFromMolFile(os.path.join(tmpdir, "charged.sdf"), removeHs=False, sanitize=False)
+            conf = m.GetConformer()
+
+            with open(os.path.join(tmpdir, "molecule.in"), "w") as f:
+                f.write("HF BASIS=6-31+G** DIPOLE\n\n")
+
+                for atom in m.GetAtoms():
+                    atom_index = atom.GetIdx()
+                    pos = conf.GetAtomPosition(atom_index)
+                    f.write(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}\n")
         except subprocess.CalledProcessError:
-            subprocess.check_output(
-                [
-                    "antechamber",
-                    "-i",
-                    "molecule.sdf",
-                    "-fi",
-                    "sdf",
-                    "-o",
-                    "charged.mol2",
-                    "-fo",
-                    "mol2",
-                    "-pf",
-                    "yes",
-                    "-dr",
-                    "n",
-                    "-c",
-                    str(short_charge_method),
-                    "-nc",
-                    str(net_charge),
-                    "-eq",
-                    "2",
-                    "-ek",
-                    "maxcyc=0, qm_theory='AM1'"
-                ],
-                cwd=tmpdir,
-            )
-        # Write out just charges
-        subprocess.check_output(
-            [
-                "antechamber",
-                "-dr",
-                "n",
-                "-i",
-                "charged.mol2",
-                "-fi",
-                "mol2",
-                "-o",
-                "charges2.mol2",
-                "-fo",
-                "mol2",
-                "-c",
-                "wc",
-                "-cf",
-                "charges.txt",
-                "-pf",
-                "yes",
-            ],
-            cwd=tmpdir,
-        )
+            with open(os.path.join(tmpdir, "molecule.in"), "w") as f:
+                f.write("HF BASIS=6-31+G** DIPOLE\n\n")
+
+                for atom, coords in zip(mol_copy.atoms, mol_copy.conformers[0]):
+                    f.write(f"{atom.symbol}              {coords[0].magnitude}   {coords[1].magnitude}    {coords[2].magnitude}\n")
+
+        subprocess.check_call(["quick.cuda", os.path.join(tmpdir, "molecule.in")], shell=False, cwd=tmpdir)
+
         # Check to ensure charges were actually produced
-        if not os.path.exists(f"{tmpdir}/charges.txt"):
+        if not os.path.exists(f"{tmpdir}/molecule.out"):
             raise ChargeCalculationError(
                 "Antechamber/sqm partial charge calculation failed on "
                 f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
             )
         # Read the charges
-        with open(f"{tmpdir}/charges.txt") as infile:
-            contents = infile.read()
-        text_charges = contents.split()
+        start = False
+        rows = []
+        with open(f"{tmpdir}/molecule.out") as infile:
+            for line in infile:
+                if "DIPOLE" in line:
+                    start = False
+                if "MULLIKEN" in line:
+                    start = True
+                elif start:
+                    row = line.split()[1]
+                    rows.append(row)
         charges_array = np.zeros([molecule.n_atoms], np.float64)
-        for index, token in enumerate(text_charges):
+        for index, token in enumerate(rows):
             charges_array[index] = float(token)
         # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
 
-        pat = re.compile(r"Total SCF energy\s+=\s+(.*)\s+kcal/mol")
-        with open(f"{tmpdir}/sqm.out") as f:
+        pat = re.compile(r"MINIMIZED ENERGY\s+=\s+(.*)\s+")
+        with open(f"{tmpdir}/molecule.out") as f:
             match = pat.search(f.read())
             energy = float(match.group(1))
 
@@ -358,8 +338,8 @@ def rdkit_assign_charges(_rdmol):
 
     charges = []
     energies = []
-    with ThreadPool(4) as pool:
-        for chs, energy in pool.map(partial(rdkit_assign_partial_charges, molecule, "am1-mulliken"), [[c] for c in conformers]):
+    for chs, energy in map(partial(rdkit_assign_partial_charges, molecule, "am1-mulliken"), [[c] for c in conformers]):
+        if chs is not None:
             charges.append(chs)
             energies.append(energy)
 
@@ -377,14 +357,15 @@ def rdkit_assign_charges(_rdmol):
     ]
 
     bcc_collection = BCCCollection(
-        parameters=bond_charge_corrections, aromaticity_model=AromaticityModels.AM1BCC
+        parameters=bond_charge_corrections, aromaticity_model=AromaticityModels.MDL
     )
 
     charge_corrections = BCCGenerator.generate(molecule, bcc_collection)
     charge_corrections.resize(charge_corrections.shape[0])
 
     # partial_charges = charge_corrections + boltzmann_weight(am1_partial_charges, energies)
-    partial_charges = charge_corrections + np.average(am1_partial_charges, axis=0)
+    partial_charges = charge_corrections + np.mean(am1_partial_charges, axis=0)
+    # partial_charges = np.mean(am1_partial_charges, axis=0)
 
     expected_charge = Chem.GetFormalCharge(rdmol)
     current_charge = 0.0
