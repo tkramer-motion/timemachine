@@ -67,6 +67,8 @@ RUN pip install --no-cache-dir -r timemachine/ci/requirements.txt
 COPY .pre-commit-config.yaml /code/timemachine/
 RUN cd /code/timemachine && git init . && pre-commit install-hooks
 
+RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=TRUE -DCUDA=FALSE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
+
 
 # Container that contains the cuda developer tools which allows building the customs ops
 # Used as an intermediate for creating a final slimmed down container with timemachine and only the cuda runtime
@@ -100,5 +102,4 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
 ENV QUICK_BASIS /opt/conda/envs/timemachine/AmberTools/src/quick/basis/
-
-RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=TRUE -DCUDA=FALSE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
+COPY --from=timemachine_cuda_dev /usr/local/bin/quick.cuda /usr/local/bin/quick.cuda
