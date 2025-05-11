@@ -100,3 +100,5 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
 ENV QUICK_BASIS /opt/conda/envs/timemachine/AmberTools/src/quick/basis/
+
+RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=TRUE -DCUDA=FALSE -DCMAKE_INSTALL_PREFIX=/usr/local/bin/ && make install
