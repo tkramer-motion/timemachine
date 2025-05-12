@@ -83,7 +83,7 @@ RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir
 FROM docker.io/nvidia/cuda:12.4.1-base-ubuntu20.04 AS timemachine
 ARG LIBXRENDER_VERSION
 ARG LIBXEXT_VERSION
-RUN (apt-get update || true) && apt-get install --no-install-recommends -y libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} gfortran \
+RUN (apt-get update || true) && apt-get install --no-install-recommends -y libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} gfortran libcublas-12-4 libcusolver-12-4 libnvjitlink-12-4 libcusparse-12-4 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
