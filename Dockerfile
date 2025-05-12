@@ -101,3 +101,4 @@ ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
 ENV QUICK_BASIS /opt/conda/envs/timemachine/AmberTools/src/quick/basis/
 COPY --from=timemachine_cuda_dev /usr/local/bin/quick.cuda /usr/local/bin/quick.cuda
+COPY --from=timemachine_cuda_dev /usr/local/libquick_cuda.so /usr/local/libquick_cuda.so
