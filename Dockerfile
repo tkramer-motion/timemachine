@@ -83,7 +83,7 @@ RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir
 FROM docker.io/nvidia/cuda:12.4.1-base-ubuntu20.04 AS timemachine
 ARG LIBXRENDER_VERSION
 ARG LIBXEXT_VERSION
-RUN (apt-get update || true) && apt-get install --no-install-recommends -y libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} \
+RUN (apt-get update || true) && apt-get install --no-install-recommends -y libxrender1=${LIBXRENDER_VERSION} libxext-dev=${LIBXEXT_VERSION} gfortran \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -99,6 +99,10 @@ ARG ENV_NAME=timemachine
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
-ENV QUICK_BASIS /opt/conda/envs/timemachine/AmberTools/src/quick/basis/
+ENV QUICK_BASIS /usr/local/basis/
 COPY --from=timemachine_cuda_dev /usr/local/bin/quick.cuda /usr/local/bin/quick.cuda
 COPY --from=timemachine_cuda_dev /usr/local/lib/libquick_cuda.so /usr/local/lib/libquick_cuda.so
+COPY --from=timemachine_cuda_dev /usr/local/lib/libquick.so /usr/local/lib/libquick.so
+COPY --from=timemachine_cuda_dev /usr/local/lib/libblas-quick.so /usr/local/lib/libblas-quick.so
+COPY --from=timemachine_cuda_dev /usr/local/lib/liblapack-quick.so /usr/local/lib/liblapack-quick.so
+COPY --from=timemachine_cuda_dev /usr/local/basis /usr/local/basis
