@@ -292,7 +292,7 @@ def rdkit_assign_partial_charges(
         # RESP charge // second stage fitting
         rows = esp.resp_solve(mol, dm, resp_a=1e-3,
                               sum_constraints=sum_constraints,
-                              equal_constraints=symmetry_groups.values()).tolist()
+                              equal_constraints=[list(s) for s in symmetry_groups.values()]).tolist()
 
     return rows, e_dft
 
