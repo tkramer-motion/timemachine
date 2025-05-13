@@ -76,7 +76,6 @@ ENV CMAKE_ARGS="-DCUDA_ARCH:STRING=${CUDA_ARCH}"
 COPY . /code/timemachine/
 WORKDIR /code/timemachine/
 RUN pip install --no-cache-dir -e . && rm -rf ./build
-RUN git clone https://github.com/merzlab/QUICK.git && cd QUICK && mkdir builddir && cd builddir && cmake .. -DCOMPILER=GNU -DMPI=FALSE -DCUDA=TRUE -DCMAKE_INSTALL_PREFIX=/usr/local/ && make install
 
 # Container with only cuda base, half the size of the timemachine_cuda_dev container
 # Need to copy curand/cudart as these are dependencies of the Timemachine GPU code
@@ -99,10 +98,3 @@ ARG ENV_NAME=timemachine
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64/
 ENV PATH /opt/conda/envs/${ENV_NAME}/bin:$PATH
 ENV CONDA_DEFAULT_ENV ${ENV_NAME}
-ENV QUICK_BASIS /usr/local/basis/
-COPY --from=timemachine_cuda_dev /usr/local/bin/quick.cuda /usr/local/bin/quick.cuda
-COPY --from=timemachine_cuda_dev /usr/local/lib/libquick_cuda.so /usr/local/lib/libquick_cuda.so
-COPY --from=timemachine_cuda_dev /usr/local/lib/libquick.so /usr/local/lib/libquick.so
-COPY --from=timemachine_cuda_dev /usr/local/lib/libblas-quick.so /usr/local/lib/libblas-quick.so
-COPY --from=timemachine_cuda_dev /usr/local/lib/liblapack-quick.so /usr/local/lib/liblapack-quick.so
-COPY --from=timemachine_cuda_dev /usr/local/basis /usr/local/basis
