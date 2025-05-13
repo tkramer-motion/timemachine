@@ -225,11 +225,7 @@ def rdkit_assign_partial_charges(
 
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
-        # if 1:
-        #     tmpdir = tempfile.mkdtemp()
-        #     print(tmpdir)
         net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
-        # Write out molecule in SDF format
         rdkit_toolkit_wrapper.to_file(
             mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
         )
@@ -262,8 +258,7 @@ def rdkit_assign_partial_charges(
                 ],
                 cwd=tmpdir,
             )
-            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
-            subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
+            subprocess.check_output(["antechamber", "-i", "charged.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
             m = Chem.MolFromMolFile(os.path.join(tmpdir, "charged.sdf"), removeHs=False, sanitize=False)
             conf = m.GetConformer()
 
@@ -288,8 +283,9 @@ def rdkit_assign_partial_charges(
                 for atom, coords in zip(mol_copy.atoms, mol_copy.conformers[0]):
                     f.write(f"{atom.symbol}              {coords[0].magnitude}   {coords[1].magnitude}    {coords[2].magnitude}\n")
 
-            subprocess.check_output(["antechamber", "-i", "charged.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
-            subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
+            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
+
+        subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
 
         symmetry_groups = defaultdict(set)
         with open(os.path.join(tmpdir, "tmp.respin"), "r") as f:
@@ -304,12 +300,12 @@ def rdkit_assign_partial_charges(
                                 symmetry_groups[group].add(atm_idx)
                                 symmetry_groups[group].add(group)
 
-        subprocess.check_call(["quick", os.path.join(tmpdir, "molecule.in")], shell=False, cwd=tmpdir)
+        subprocess.check_call(["quick.cuda", os.path.join(tmpdir, "molecule.in")], shell=False, cwd=tmpdir)
 
         # Check to ensure charges were actually produced
         if not os.path.exists(f"{tmpdir}/molecule.out"):
             raise ChargeCalculationError(
-                "Antechamber/sqm partial charge calculation failed on "
+                "Quick partial charge calculation failed on "
                 f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
             )
         # Read the charges
@@ -328,15 +324,13 @@ def rdkit_assign_partial_charges(
         for group in symmetry_groups.values():
             charge_values = []
             for atom_idx in group:
-                charge_values.append(rows[atom_idx])
+                charge_values.append(rows[atom_idx - 1])
             for atom_idx in group:
-                rows[atom_idx] = statistics.mean(charge_values)
+                rows[atom_idx - 1] = statistics.mean(charge_values)
 
         charges_array = np.zeros([molecule.n_atoms], np.float64)
         for index, token in enumerate(rows):
             charges_array[index] = token
-        # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
-
 
         pat = re.compile(r"TOTAL ENERGY\s+=\s+(.*)\s+")
         with open(f"{tmpdir}/molecule.out") as f:
@@ -377,7 +371,7 @@ def rdkit_assign_charges(_rdmol):
             energies.append(energy)
 
     am1_partial_charges = np.array(charges)
-    energies = np.array(energies)
+    # energies = np.array(energies)
 
     path = Path("openeye-am1-bcc.json")
     with resources.as_file(resources.files("timemachine.ff.params") / path.name) as rpath:
