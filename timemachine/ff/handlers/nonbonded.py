@@ -1,30 +1,28 @@
 import base64
-import json
 import os
 import pickle
 import re
-import statistics
 import subprocess
 import tempfile
 import warnings
 from collections import Counter, defaultdict
 from functools import partial
-from importlib import resources
-from pathlib import Path
 from shutil import which
 
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
+import pyscf
+from gpu4pyscf.pop import esp
 from jax import jit, vmap
 from numpy.typing import NDArray
-from openff.recharge.aromaticity import AromaticityModel, AromaticityModels
-from openff.recharge.charges.bcc import BCCGenerator, BCCCollection, BCCParameter
+from openff.recharge.aromaticity import AromaticityModel
 from openff.recharge.utilities.molecule import extract_conformers
 from openff.toolkit import unit, AmberToolsToolkitWrapper, RDKitToolkitWrapper
 from openff.toolkit.topology import Molecule
-from openff.toolkit.utils import ChargeCalculationError, AntechamberNotFoundError, rdkit_wrapper, ChargeMethodUnavailableError
+from openff.toolkit.utils import AntechamberNotFoundError, rdkit_wrapper
 from openff.units import Quantity
+from pyscf import scf
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from scipy.constants import physical_constants
@@ -190,12 +188,6 @@ def rdkit_assign_partial_charges(
 ) -> tuple[np.array, float]:
     partial_charge_method = partial_charge_method.lower()
 
-    if partial_charge_method not in AmberToolsToolkitWrapper._supported_charge_methods:
-        raise ChargeMethodUnavailableError(
-            f"partial_charge_method '{partial_charge_method}' is not available from AmberToolsToolkitWrapper. "
-            f"Available charge methods are {AmberToolsToolkitWrapper._supported_charge_methods}"
-        )
-
     charge_method = AmberToolsToolkitWrapper._supported_charge_methods[partial_charge_method]
 
     if _cls is None:
@@ -209,13 +201,6 @@ def rdkit_assign_partial_charges(
     mol_copy._conformers = None
     for conformer in use_conformers:
         mol_copy._add_conformer(conformer)
-    AmberToolsToolkitWrapper._check_n_conformers(None,
-                                                 mol_copy,
-                                                 partial_charge_method=partial_charge_method,
-                                                 min_confs=charge_method["min_confs"],
-                                                 max_confs=charge_method["max_confs"],
-                                                 strict_n_conformers=strict_n_conformers,
-                                                 )
 
     ANTECHAMBER_PATH = which("antechamber")
     if ANTECHAMBER_PATH is None:
@@ -225,9 +210,6 @@ def rdkit_assign_partial_charges(
 
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
-        # if 1:
-        #     tmpdir = tempfile.mkdtemp()
-        #     print(tmpdir)
         net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
         # Write out molecule in SDF format
         rdkit_toolkit_wrapper.to_file(
@@ -262,35 +244,23 @@ def rdkit_assign_partial_charges(
                 ],
                 cwd=tmpdir,
             )
-            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
-            subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
+            subprocess.check_output(["antechamber", "-i", "charged.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
             m = Chem.MolFromMolFile(os.path.join(tmpdir, "charged.sdf"), removeHs=False, sanitize=False)
             conf = m.GetConformer()
 
-            elements = set()
+            xyz = []
             for atom in m.GetAtoms():
-                elements.add(atom.GetSymbol())
-            with open(os.path.join(tmpdir, "molecule.in"), "w") as f:
-                f.write(f"HF BASIS={'6-31G**' if 'Br' in elements else '6-31+G**'} DIPOLE\n\n")
+                atom_index = atom.GetIdx()
+                pos = conf.GetAtomPosition(atom_index)
+                xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
 
-                for atom in m.GetAtoms():
-                    atom_index = atom.GetIdx()
-                    pos = conf.GetAtomPosition(atom_index)
-                    f.write(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}\n")
         except subprocess.CalledProcessError:
-            elements = set()
-            for atom in mol_copy.atoms:
-                elements.add(atom.symbol)
+            for atom, coords in zip(mol_copy.atoms, mol_copy.conformers[0]):
+                xyz.append(f"{atom.symbol} {coords[0].magnitude} {coords[1].magnitude} {coords[2].magnitude}")
 
-            with open(os.path.join(tmpdir, "molecule.in"), "w") as f:
-                f.write(f"HF BASIS={'6-31G**' if 'Br' in elements else '6-31+G**'} DIPOLE\n\n")
+            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
 
-                for atom, coords in zip(mol_copy.atoms, mol_copy.conformers[0]):
-                    f.write(f"{atom.symbol}              {coords[0].magnitude}   {coords[1].magnitude}    {coords[2].magnitude}\n")
-
-            subprocess.check_output(["antechamber", "-i", "charged.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
-            subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
-
+        subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
         symmetry_groups = defaultdict(set)
         with open(os.path.join(tmpdir, "tmp.respin"), "r") as f:
             lines = f.readlines()
@@ -301,49 +271,30 @@ def rdkit_assign_partial_charges(
                         if parts:
                             group = int(parts[1])
                             if group:
-                                symmetry_groups[group].add(atm_idx)
-                                symmetry_groups[group].add(group)
+                                symmetry_groups[group].add(atm_idx - 1)
+                                symmetry_groups[group].add(group - 1)
 
-        subprocess.check_call(["quick", os.path.join(tmpdir, "molecule.in")], shell=False, cwd=tmpdir)
+        mol = pyscf.M(atom="\n".join(xyz), basis='def2-TZVP')
+        mol.cart = True
+        mf = scf.RKS(mol).to_gpu()
+        mf.xc = 'WB97M-V'
+        e_dft = mf.kernel()
+        dm = mf.make_rdm1()
 
-        # Check to ensure charges were actually produced
-        if not os.path.exists(f"{tmpdir}/molecule.out"):
-            raise ChargeCalculationError(
-                "Antechamber/sqm partial charge calculation failed on "
-                f"molecule {molecule.name} (SMILES {molecule.to_smiles()})"
-            )
-        # Read the charges
-        start = False
-        rows = []
-        with open(f"{tmpdir}/molecule.out") as infile:
-            for line in infile:
-                if "TOTAL" in line:
-                    start = False
-                if "MULLIKEN" in line:
-                    start = True
-                elif start:
-                    row = line.split()[1]
-                    rows.append(float(row))
+        # ESP charge
+        q0 = esp.esp_solve(mol, dm)
+        print('Fitted ESP charge')
 
-        for group in symmetry_groups.values():
-            charge_values = []
-            for atom_idx in group:
-                charge_values.append(rows[atom_idx])
-            for atom_idx in group:
-                rows[atom_idx] = statistics.mean(charge_values)
+        # RESP charge // first stage fitting
+        q1 = esp.resp_solve(mol, dm)
+        sum_constraints = []
 
-        charges_array = np.zeros([molecule.n_atoms], np.float64)
-        for index, token in enumerate(rows):
-            charges_array[index] = token
-        # TODO: Ensure that the atoms in charged.mol2 are in the same order as in molecule.sdf
+        # RESP charge // second stage fitting
+        rows = esp.resp_solve(mol, dm, resp_a=1e-3,
+                              sum_constraints=sum_constraints,
+                              equal_constraints=symmetry_groups.values()).tolist()
 
-
-        pat = re.compile(r"TOTAL ENERGY\s+=\s+(.*)\s+")
-        with open(f"{tmpdir}/molecule.out") as f:
-            match = pat.search(f.read())
-            energy = float(match.group(1))
-
-    return charges_array, energy
+    return rows, e_dft
 
 
 def boltzmann_weight(conformer_properties: np.array, conformer_energies: np.array, temp: float = 298.15) -> float:
@@ -379,26 +330,7 @@ def rdkit_assign_charges(_rdmol):
     am1_partial_charges = np.array(charges)
     energies = np.array(energies)
 
-    path = Path("openeye-am1-bcc.json")
-    with resources.as_file(resources.files("timemachine.ff.params") / path.name) as rpath:
-        if rpath.exists():
-            with open(rpath) as file:
-                bcc_dictionaries = json.load(file)["parameters"]
-
-    bond_charge_corrections = [
-        BCCParameter(**dictionary) for dictionary in bcc_dictionaries
-    ]
-
-    bcc_collection = BCCCollection(
-        parameters=bond_charge_corrections, aromaticity_model=AromaticityModels.MDL
-    )
-
-    charge_corrections = BCCGenerator.generate(molecule, bcc_collection)
-    charge_corrections.resize(charge_corrections.shape[0])
-
-    # partial_charges = charge_corrections + boltzmann_weight(am1_partial_charges, energies)
-    partial_charges = charge_corrections + np.mean(am1_partial_charges, axis=0)
-    # partial_charges = np.mean(am1_partial_charges, axis=0)
+    partial_charges = np.mean(am1_partial_charges, axis=0)
 
     expected_charge = Chem.GetFormalCharge(rdmol)
     current_charge = 0.0
