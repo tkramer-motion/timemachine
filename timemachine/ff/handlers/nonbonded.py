@@ -216,6 +216,8 @@ def rdkit_assign_partial_charges(
         )
         # Compute desired charges
         short_charge_method = charge_method["antechamber_keyword"]
+        xyz = []
+
         try:
             subprocess.check_output(
                 [
@@ -247,7 +249,6 @@ def rdkit_assign_partial_charges(
             m = Chem.MolFromMolFile(os.path.join(tmpdir, "charged.sdf"), removeHs=False, sanitize=False)
             conf = m.GetConformer()
 
-            xyz = []
             for atom in m.GetAtoms():
                 atom_index = atom.GetIdx()
                 pos = conf.GetAtomPosition(atom_index)
