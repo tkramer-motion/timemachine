@@ -1,7 +1,6 @@
 import base64
 import os
 import pickle
-import re
 import subprocess
 import tempfile
 import warnings
@@ -13,7 +12,6 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 import pyscf
-from gpu4pyscf.pop import esp
 from jax import jit, vmap
 from numpy.typing import NDArray
 from openff.recharge.aromaticity import AromaticityModel
@@ -183,9 +181,10 @@ def rdkit_assign_partial_charges(
         molecule: Molecule,
         partial_charge_method: str,
         use_conformers: list[Quantity],
-        strict_n_conformers: bool = False,
         _cls=None,
 ) -> tuple[np.array, float]:
+    from gpu4pyscf.pop import esp
+
     partial_charge_method = partial_charge_method.lower()
 
     charge_method = AmberToolsToolkitWrapper._supported_charge_methods[partial_charge_method]
