@@ -16,9 +16,9 @@ from jax import jit, vmap
 from numpy.typing import NDArray
 from openff.recharge.aromaticity import AromaticityModel
 from openff.recharge.utilities.molecule import extract_conformers
-from openff.toolkit import unit, AmberToolsToolkitWrapper, RDKitToolkitWrapper
+from openff.toolkit import unit, RDKitToolkitWrapper
 from openff.toolkit.topology import Molecule
-from openff.toolkit.utils import AntechamberNotFoundError, rdkit_wrapper
+from openff.toolkit.utils import AntechamberNotFoundError
 from openff.units import Quantity
 from pyscf import scf
 from rdkit import Chem
@@ -178,28 +178,11 @@ def rdkit_generate_conformations(mol):
 
 
 def rdkit_assign_partial_charges(
-        molecule: Molecule,
-        partial_charge_method: str,
+        _rdmol: Chem.Mol,
         use_conformers: list[Quantity],
         _cls=None,
 ) -> tuple[np.array, float]:
     from gpu4pyscf.pop import esp
-
-    partial_charge_method = partial_charge_method.lower()
-
-    charge_method = AmberToolsToolkitWrapper._supported_charge_methods[partial_charge_method]
-
-    if _cls is None:
-        _cls = Molecule
-
-    # Make a temporary copy of the molecule, since we'll be messing with its conformers
-    mol_copy = _cls(molecule)
-
-    rdkit_toolkit_wrapper = rdkit_wrapper.RDKitToolkitWrapper()
-
-    mol_copy._conformers = None
-    for conformer in use_conformers:
-        mol_copy._add_conformer(conformer)
 
     ANTECHAMBER_PATH = which("antechamber")
     if ANTECHAMBER_PATH is None:
@@ -207,16 +190,16 @@ def rdkit_assign_partial_charges(
             "Antechamber not found, cannot run assign_partial_charges()"
         )
 
+    rdmol = Chem.Mol(_rdmol)
+    rdmol.GetConformer().SetPositions(np.array(use_conformers[0], dtype=np.float64))
+
+    xyz = []
+
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
-        net_charge = mol_copy.total_charge.m_as(unit.elementary_charge)
-        # Write out molecule in SDF format
-        rdkit_toolkit_wrapper.to_file(
-            mol_copy, f"{tmpdir}/molecule.sdf", file_format="sdf"
-        )
-        # Compute desired charges
-        short_charge_method = charge_method["antechamber_keyword"]
-        xyz = []
+        net_charge = Chem.GetFormalCharge(rdmol)
+
+        print(Chem.MolToMolBlock(rdmol), file=open(os.path.join(tmpdir, "molecule.sdf"), 'w+'))
 
         try:
             subprocess.check_output(
@@ -227,15 +210,15 @@ def rdkit_assign_partial_charges(
                     "-fi",
                     "sdf",
                     "-o",
-                    "charged.sdf",
+                    "charged.ac",
                     "-fo",
-                    "sdf",
+                    "ac",
                     "-pf",
                     "yes",
                     "-dr",
                     "n",
                     "-c",
-                    str(short_charge_method),
+                    "mul",
                     "-nc",
                     str(net_charge),
                     "-eq",
@@ -245,20 +228,23 @@ def rdkit_assign_partial_charges(
                 ],
                 cwd=tmpdir,
             )
-            subprocess.check_output(["antechamber", "-i", "charged.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
-            m = Chem.MolFromMolFile(os.path.join(tmpdir, "charged.sdf"), removeHs=False, sanitize=False)
-            conf = m.GetConformer()
 
-            for atom in m.GetAtoms():
-                atom_index = atom.GetIdx()
-                pos = conf.GetAtomPosition(atom_index)
-                xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
+            coords = []
+            with open(os.path.join(tmpdir, "charged.ac"), "r") as f:
+                for line in f:
+                    if line.startswith("ATOM"):
+                        parts = line.split()
+                        coords.append(parts[5:8])
+            for atom, pos in zip(rdmol.GetAtoms(), coords):
+                xyz.append(f"{atom.GetSymbol()} {pos[0]} {pos[1]} {pos[2]}")
 
         except subprocess.CalledProcessError:
-            for atom, coords in zip(mol_copy.atoms, mol_copy.conformers[0]):
-                xyz.append(f"{atom.symbol} {coords[0].magnitude} {coords[1].magnitude} {coords[2].magnitude}")
+            for atom in rdmol.GetAtoms():
+                atom_index = atom.GetIdx()
+                pos = rdmol.GetConformer().GetAtomPosition(atom_index)
+                xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
 
-            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf"], cwd=tmpdir)
+            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf", "-nc", str(net_charge)], cwd=tmpdir)
 
         subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
         symmetry_groups = defaultdict(set)
@@ -322,7 +308,7 @@ def rdkit_assign_charges(_rdmol):
 
     charges = []
     energies = []
-    for chs, energy in map(partial(rdkit_assign_partial_charges, molecule, "am1-mulliken"), [[c] for c in conformers]):
+    for chs, energy in map(partial(rdkit_assign_partial_charges, _rdmol), [[c] for c in conformers]):
         if chs is not None:
             charges.append(chs)
             energies.append(energy)
