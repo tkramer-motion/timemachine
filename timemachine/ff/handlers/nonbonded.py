@@ -23,6 +23,7 @@ from openff.units import Quantity
 from pyscf import gto, scf
 from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit.Chem.Descriptors import NumRadicalElectrons
 from scipy.constants import physical_constants
 
 from timemachine import constants
@@ -208,7 +209,7 @@ def rdkit_assign_partial_charges(
         try:
             out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET")
 
-            m = Chem.MolFromMolFile(out_path)
+            m = Chem.MolFromMolFile(out_path, removeHs=False)
             c = m.GetConformer()
             for i, atom in enumerate(m.GetAtoms()):
                 positions = c.GetAtomPosition(i)
@@ -237,6 +238,7 @@ def rdkit_assign_partial_charges(
         mol = gto.Mole()
         mol.cart = True
         mol.charge = Chem.GetFormalCharge(rdmol)
+        mol.spin = NumRadicalElectrons(rdmol)
         mol.atom = "\n".join(xyz)
         mol.basis = '6-31gs'
         mol.build()
