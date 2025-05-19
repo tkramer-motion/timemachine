@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import networkx as nx
 import numpy as np
 import pyscf
+from Auto3D.ASE.geometry import opt_geometry
 from jax import jit, vmap
 from numpy.typing import NDArray
 from openff.recharge.aromaticity import AromaticityModel
@@ -166,6 +167,7 @@ def rdkit_generate_conformations(mol):
         params = Chem.rdDistGeom.ETKDGv3()
     else:
         params = Chem.rdDistGeom.srETKDGv3()
+        params.useSmallRingTorsions = True
 
     params.pruneRmsThresh = 1.0
     params.clearConfs = True
@@ -175,6 +177,7 @@ def rdkit_generate_conformations(mol):
         800,
         params
     )
+    AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=500)
 
 
 def rdkit_assign_partial_charges(
@@ -201,50 +204,22 @@ def rdkit_assign_partial_charges(
 
         print(Chem.MolToMolBlock(rdmol), file=open(os.path.join(tmpdir, "molecule.sdf"), 'w+'))
 
+        subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf", "-nc", str(net_charge)], cwd=tmpdir)
+
         try:
-            subprocess.check_output(
-                [
-                    "antechamber",
-                    "-i",
-                    "molecule.sdf",
-                    "-fi",
-                    "sdf",
-                    "-o",
-                    "charged.ac",
-                    "-fo",
-                    "ac",
-                    "-pf",
-                    "yes",
-                    "-dr",
-                    "n",
-                    "-c",
-                    "mul",
-                    "-nc",
-                    str(net_charge),
-                    "-eq",
-                    "2",
-                    "-ek",
-                    "qm_theory='AM1'"
-                ],
-                cwd=tmpdir,
-            )
+            out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET", opt_tol=0.002)
 
-            coords = []
-            with open(os.path.join(tmpdir, "charged.ac"), "r") as f:
-                for line in f:
-                    if line.startswith("ATOM"):
-                        parts = line.split()
-                        coords.append(parts[5:8])
-            for atom, pos in zip(rdmol.GetAtoms(), coords):
-                xyz.append(f"{atom.GetSymbol()} {pos[0]} {pos[1]} {pos[2]}")
-
-        except subprocess.CalledProcessError:
+            m = Chem.MolFromMolFile(out_path)
+            c = m.GetConformer()
+            for i, atom in enumerate(m.GetAtoms()):
+                positions = c.GetAtomPosition(i)
+                xyz.append(f"{atom.GetSymbol()} {positions.x} {positions.y} {positions.z}")
+        except Exception as e:
+            print(e)
             for atom in rdmol.GetAtoms():
                 atom_index = atom.GetIdx()
                 pos = rdmol.GetConformer().GetAtomPosition(atom_index)
                 xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
-
-            subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf", "-nc", str(net_charge)], cwd=tmpdir)
 
         subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
         symmetry_groups = defaultdict(set)
