@@ -206,7 +206,7 @@ def rdkit_assign_partial_charges(
         subprocess.check_output(["antechamber", "-i", "molecule.sdf", "-o", "charged.ac", "-fo", "ac", "-fi", "sdf", "-nc", str(net_charge)], cwd=tmpdir)
 
         try:
-            out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET", opt_tol=0.002)
+            out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET")
 
             m = Chem.MolFromMolFile(out_path)
             c = m.GetConformer()
