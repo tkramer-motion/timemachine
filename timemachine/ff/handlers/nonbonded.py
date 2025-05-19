@@ -11,7 +11,6 @@ from shutil import which
 import jax.numpy as jnp
 import networkx as nx
 import numpy as np
-import pyscf
 from Auto3D.ASE.geometry import opt_geometry
 from jax import jit, vmap
 from numpy.typing import NDArray
@@ -21,7 +20,7 @@ from openff.toolkit import unit, RDKitToolkitWrapper
 from openff.toolkit.topology import Molecule
 from openff.toolkit.utils import AntechamberNotFoundError
 from openff.units import Quantity
-from pyscf import scf
+from pyscf import gto, scf
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from scipy.constants import physical_constants
@@ -235,10 +234,14 @@ def rdkit_assign_partial_charges(
                                 symmetry_groups[group].add(atm_idx - 1)
                                 symmetry_groups[group].add(group - 1)
 
-        mol = pyscf.M(atom="\n".join(xyz), basis='def2-TZVP')
+        mol = gto.Mole()
         mol.cart = True
-        mf = scf.RKS(mol).to_gpu()
-        mf.xc = 'WB97M-V'
+        mol.charge = Chem.GetFormalCharge(rdmol)
+        mol.atom = "\n".join(xyz)
+        mol.basis = '6-31gs'
+        mol.build()
+
+        mf = scf.RHF(mol).to_gpu()
         e_dft = mf.kernel()
         dm = mf.make_rdm1()
 
