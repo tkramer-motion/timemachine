@@ -221,7 +221,7 @@ def rdkit_assign_partial_charges(
             bad_bond = False
             for bnd in m.GetBonds():
                 bond_length = GetBondLength(m.GetConformer(), bnd.GetBeginAtomIdx(), bnd.GetEndAtomIdx())
-                if bond_length > 2.0:
+                if bond_length > 3.0:
                     print(f"Bond length {bond_length} is too high between {bnd.GetBeginAtom().GetSymbol()} and {bnd.GetEndAtom().GetSymbol()}")
                     bad_bond = True
 
