@@ -25,6 +25,7 @@ from pyscf.data import radii
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.Descriptors import NumRadicalElectrons
+from rdkit.Chem.rdMolTransforms import GetBondLength
 from scipy.constants import physical_constants
 
 from timemachine import constants
@@ -216,8 +217,18 @@ def rdkit_assign_partial_charges(
 
         try:
             out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET")
+            m = Chem.MolFromMolFile(out_path, removeHs=False)
+            bad_bond = False
+            for bnd in m.GetBonds():
+                bond_length = GetBondLength(m.GetConformer(), bnd.GetBeginAtomIdx(), bnd.GetEndAtomIdx())
+                if bond_length > 2.0:
+                    print(f"Bond length {bond_length} is too high between {bnd.GetBeginAtom().GetSymbol()} and {bnd.GetEndAtom().GetSymbol()}")
+                    bad_bond = True
 
-            xyz = make_xyz(Chem.MolFromMolFile(out_path, removeHs=False))
+            if not bad_bond:
+                xyz = make_xyz(m)
+            else:
+                xyz = make_xyz(rdmol)
         except Exception as e:
             print(e)
             xyz = make_xyz(rdmol)
