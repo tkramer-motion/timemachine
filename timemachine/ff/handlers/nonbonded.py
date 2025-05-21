@@ -21,6 +21,7 @@ from openff.toolkit.topology import Molecule
 from openff.toolkit.utils import AntechamberNotFoundError
 from openff.units import Quantity
 from pyscf import gto, scf
+from pyscf.data import radii
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.Descriptors import NumRadicalElectrons
@@ -180,6 +181,15 @@ def rdkit_generate_conformations(mol):
     AllChem.MMFFOptimizeMoleculeConfs(mol, maxIters=500)
 
 
+def make_xyz(rdmol: Chem.Mol) -> str:
+    xyz = []
+    for atom in rdmol.GetAtoms():
+        atom_index = atom.GetIdx()
+        pos = rdmol.GetConformer().GetAtomPosition(atom_index)
+        xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
+    return "\n".join(xyz)
+
+
 def rdkit_assign_partial_charges(
         _rdmol: Chem.Mol,
         use_conformers: list[Quantity],
@@ -196,8 +206,6 @@ def rdkit_assign_partial_charges(
     rdmol = Chem.Mol(_rdmol)
     rdmol.GetConformer().SetPositions(np.array(use_conformers[0], dtype=np.float64))
 
-    xyz = []
-
     # Compute charges
     with tempfile.TemporaryDirectory() as tmpdir:
         net_charge = Chem.GetFormalCharge(rdmol)
@@ -209,17 +217,10 @@ def rdkit_assign_partial_charges(
         try:
             out_path = opt_geometry(os.path.join(tmpdir, "molecule.sdf"), model_name="AIMNET")
 
-            m = Chem.MolFromMolFile(out_path, removeHs=False)
-            c = m.GetConformer()
-            for i, atom in enumerate(m.GetAtoms()):
-                positions = c.GetAtomPosition(i)
-                xyz.append(f"{atom.GetSymbol()} {positions.x} {positions.y} {positions.z}")
+            xyz = make_xyz(Chem.MolFromMolFile(out_path, removeHs=False))
         except Exception as e:
             print(e)
-            for atom in rdmol.GetAtoms():
-                atom_index = atom.GetIdx()
-                pos = rdmol.GetConformer().GetAtomPosition(atom_index)
-                xyz.append(f"{atom.GetSymbol()} {pos.x} {pos.y} {pos.z}")
+            xyz = make_xyz(rdmol)
 
         subprocess.check_output(["respgen", "-i", "charged.ac", "-o", "tmp.respin", "-f", "resp"], cwd=tmpdir)
         symmetry_groups = defaultdict(set)
@@ -239,7 +240,7 @@ def rdkit_assign_partial_charges(
         mol.cart = True
         mol.charge = Chem.GetFormalCharge(rdmol)
         mol.spin = NumRadicalElectrons(rdmol)
-        mol.atom = "\n".join(xyz)
+        mol.atom = xyz
         mol.basis = '6-31gs'
         mol.build()
 
@@ -247,16 +248,37 @@ def rdkit_assign_partial_charges(
         e_dft = mf.kernel()
         dm = mf.make_rdm1()
 
+        rad = 1.0 / radii.BOHR * np.asarray([
+            -1,
+            1.20,  # H
+            1.20,  # He
+            1.37,  # Li
+            1.45,  # Be
+            1.45,  # B
+            1.50,  # C
+            1.50,  # N,
+            1.40,  # O
+            1.35,  # F,
+            1.30,  # Ne,
+            1.57,  # Na,
+            1.36,  # Mg
+            1.24,  # Al,
+            1.17,  # Si,
+            1.80,  # P,
+            1.75,  # S,
+            1.70,  # Cl
+            -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1.85])  # Br
+
         # ESP charge
-        q0 = esp.esp_solve(mol, dm)
+        q0 = esp.esp_solve(mol, dm, rad=rad)
         print('Fitted ESP charge')
 
         # RESP charge // first stage fitting
-        q1 = esp.resp_solve(mol, dm)
+        q1 = esp.resp_solve(mol, dm, rad=rad)
         sum_constraints = []
 
         # RESP charge // second stage fitting
-        rows = esp.resp_solve(mol, dm, resp_a=1e-3,
+        rows = esp.resp_solve(mol, dm, rad=rad, resp_a=1e-3,
                               sum_constraints=sum_constraints,
                               equal_constraints=[list(s) for s in symmetry_groups.values()]).tolist()
 
