@@ -13,11 +13,13 @@ from pymbar.utils import kln_to_kn
 from timemachine.constants import BOLTZ
 from timemachine.fe import model_utils, topology
 from timemachine.fe.bar import (
+    BarResult,
     bar_with_pessimistic_uncertainty,
     df_and_err_from_u_kln,
     pair_overlap_from_ukln,
     works_from_ukln,
 )
+from timemachine.fe.convergence import ConvergenceConfig, ConvergenceMonitor
 from timemachine.fe.energy_decomposition import EnergyDecomposedState, compute_energy_decomposed_u_kln, get_batch_u_fns
 from timemachine.fe.plots import (
     plot_as_png_fxn,
@@ -154,6 +156,46 @@ class LocalMDParams:
 
 
 @dataclass(frozen=True)
+class ConvergenceParams:
+    """
+    Parameters for convergence checking during simulations.
+    
+    Parameters
+    ----------
+    check_interval : int
+        Check convergence every N frames (default: 1000 = 1ns at 1ps/frame)
+    convergence_threshold : float
+        Maximum allowed dG change over window (kJ/mol) for convergence
+    error_threshold : float
+        Maximum allowed error (kJ/mol) for convergence
+    window_size : int
+        Number of checks to consider for convergence assessment
+    min_frames : int
+        Minimum frames before checking convergence
+    max_frames : int
+        Maximum frames to run (will stop at this point regardless of convergence)
+    enable_convergence_check : bool
+        Whether to enable convergence checking
+    """
+    check_interval: int = 1000
+    convergence_threshold: float = 0.5
+    error_threshold: float = 1.0
+    window_size: int = 3
+    min_frames: int = 2000
+    max_frames: int = 20000
+    enable_convergence_check: bool = True  # Default to True to enable convergence checking
+
+    def __post_init__(self):
+        assert self.check_interval > 0
+        assert self.convergence_threshold > 0
+        assert self.error_threshold > 0
+        assert self.window_size > 0
+        assert self.min_frames > 0
+        assert self.max_frames >= self.min_frames
+        assert self.max_frames > self.check_interval
+
+
+@dataclass(frozen=True)
 class MDParams:
     n_frames: int
     n_eq_steps: int
@@ -166,6 +208,8 @@ class MDParams:
     hrex_params: HREXParams | None = None
     # Setting water_sampling_params to None disables water sampling.
     water_sampling_params: WaterSamplingParams | None = None
+    # Setting convergence_params to None disables convergence checking
+    convergence_params: ConvergenceParams | None = None
 
     def __post_init__(self):
         assert self.steps_per_frame > 0
@@ -173,6 +217,11 @@ class MDParams:
         assert self.n_eq_steps >= 0
         if self.local_md_params is not None:
             assert self.local_md_params.local_steps <= self.steps_per_frame
+        if self.convergence_params is not None and self.convergence_params.enable_convergence_check:
+            # If convergence checking is enabled, max_frames overrides n_frames
+            if self.n_frames > self.convergence_params.max_frames:
+                # This is a soft check - we'll use max_frames as the limit
+                pass
 
 
 @dataclass
@@ -997,6 +1046,119 @@ def run_sims_sequential(
     ]
 
     return PairBarResult(list(initial_states), pair_bar_results), stored_trajectories
+
+
+def run_sims_sequential_with_convergence(
+    initial_states: Sequence[InitialState],
+    md_params: MDParams,
+    temperature: float,
+) -> tuple[PairBarResult, list[Trajectory]]:
+    """
+    Run simulations sequentially with optional convergence checking.
+    
+    This is a wrapper around run_sims_sequential that adds convergence checking
+    capability. If convergence_params is not set or enable_convergence_check is False,
+    this behaves identically to run_sims_sequential.
+    
+    Returns
+    -------
+    PairBarResult
+        Results of pair BAR analysis
+    
+    list of Trajectory
+        Trajectory for each state (may be fewer than initial_states if converged early)
+    """
+    # If convergence checking is not enabled, use the original function
+    if not (md_params.convergence_params and md_params.convergence_params.enable_convergence_check):
+        return run_sims_sequential(initial_states, md_params, temperature)
+    
+    stored_trajectories = []
+    
+    # Ensure state compatibility
+    for s in initial_states[1:]:
+        assert_potentials_compatible(initial_states[0].potentials, s.potentials)
+    
+    unbound_impls = [p.potential.to_gpu(np.float32).unbound_impl for p in initial_states[0].potentials]
+    
+    # Set up convergence monitoring
+    convergence_config = ConvergenceConfig(
+        check_interval=md_params.convergence_params.check_interval,
+        convergence_threshold=md_params.convergence_params.convergence_threshold,
+        error_threshold=md_params.convergence_params.error_threshold,
+        window_size=md_params.convergence_params.window_size,
+        min_frames=md_params.convergence_params.min_frames,
+        max_frames=md_params.convergence_params.max_frames,
+        enable_convergence_check=True
+    )
+    convergence_monitor = ConvergenceMonitor(convergence_config)
+    
+    # Track total frames across all windows
+    total_frames_per_window = md_params.n_frames
+    cumulative_frames = 0
+    
+    for window_idx, initial_state in enumerate(initial_states):
+        # Check if we've reached max frames
+        if cumulative_frames >= convergence_config.max_frames:
+            print(f"Reached maximum frames ({convergence_config.max_frames}), stopping at window {window_idx}")
+            break
+        
+        # Determine how many frames to run for this window
+        frames_remaining = convergence_config.max_frames - cumulative_frames
+        frames_to_run = min(md_params.n_frames, frames_remaining)
+        
+        # Create modified md_params if needed
+        if frames_to_run < md_params.n_frames:
+            from dataclasses import replace
+            current_md_params = replace(md_params, n_frames=frames_to_run)
+        else:
+            current_md_params = md_params
+        
+        # Run simulation for this window
+        traj = sample(initial_state, current_md_params, max_buffer_frames=100)
+        print(f"Completed simulation at lambda={initial_state.lamb} ({frames_to_run} frames)")
+        
+        stored_trajectories.append(traj)
+        cumulative_frames += frames_to_run
+        
+        # Only check convergence if we have at least 2 windows
+        if len(stored_trajectories) >= 2:
+            # Calculate current BAR results
+            current_states = initial_states[:len(stored_trajectories)]
+            current_ulkns = generate_pair_bar_ulkns(
+                current_states, stored_trajectories, temperature, unbound_impls=unbound_impls
+            )
+            current_bar_results = [
+                estimate_free_energy_bar(u_kln, temperature) for u_kln in current_ulkns
+            ]
+            
+            # Calculate cumulative free energy
+            total_dg = sum(result.dG for result in current_bar_results)
+            total_error = np.sqrt(sum(result.dG_err**2 for result in current_bar_results))
+            
+            # Check convergence
+            if convergence_monitor.should_check(cumulative_frames):
+                metrics = convergence_monitor.update(total_dg, total_error, cumulative_frames)
+                
+                print(f"Convergence check at {cumulative_frames} frames:")
+                print(f"  Windows completed: {len(stored_trajectories)}/{len(initial_states)}")
+                print(f"  dG = {metrics.current_dg:.3f} ± {metrics.current_error:.3f} kJ/mol")
+                print(f"  dG change = {metrics.dg_change:.3f} kJ/mol")
+                print(f"  Convergence score = {metrics.convergence_score:.3f}")
+                
+                if metrics.is_converged and cumulative_frames >= convergence_config.min_frames:
+                    print(f"*** Convergence achieved after {cumulative_frames} frames ***")
+                    break
+    
+    # Generate final results with the windows we actually simulated
+    final_states = initial_states[:len(stored_trajectories)]
+    final_ulkns = generate_pair_bar_ulkns(
+        final_states, stored_trajectories, temperature, unbound_impls=unbound_impls
+    )
+    final_bar_results = [
+        estimate_free_energy_bar(u_kln, temperature) for u_kln in final_ulkns
+    ]
+    
+    return PairBarResult(list(final_states), final_bar_results), stored_trajectories
 
 
 class MinOverlapWarning(UserWarning):

@@ -29,6 +29,7 @@ from timemachine.fe.free_energy import (
     run_sims_bisection,
     run_sims_hrex,
     run_sims_sequential,
+    run_sims_sequential_with_convergence,
 )
 from timemachine.fe.lambda_schedule import bisection_lambda_schedule
 from timemachine.fe.plots import (
@@ -621,7 +622,8 @@ def estimate_relative_free_energy(
     # TODO: rename prefix to postfix, or move to beginning of combined_prefix?
     combined_prefix = get_mol_name(mol_a) + "_" + get_mol_name(mol_b) + "_" + prefix
     try:
-        result, stored_trajectories = run_sims_sequential(initial_states, md_params, temperature)
+        # Use convergence-enabled version if available
+        result, stored_trajectories = run_sims_sequential_with_convergence(initial_states, md_params, temperature)
         plots = make_pair_bar_plots(result, temperature, combined_prefix)
         return SimulationResult(result, plots, stored_trajectories, md_params, [])
     except Exception as err:
